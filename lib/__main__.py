@@ -12,7 +12,7 @@ if __name__ == "__main__":
         xyzLoader = XYZLoader(filepath)
         classes, points = xyzLoader.load()
 
-        voxelsPoints = downsample_point_cloud(points=points, target_points=len(points) / 10)
+        voxelsPoints = downsample_point_cloud(points=points, target_points=len(points) / 2)
 
         print(f"Размер изначальный - {len(points)} точек")
         print(f"Размер вокселей - {len(voxelsPoints)} точек")
