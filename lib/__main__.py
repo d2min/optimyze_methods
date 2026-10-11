@@ -6,13 +6,13 @@ from optimization.downsampling.voxel import downsample_point_cloud
 
 
 if __name__ == "__main__":
-    filepath = "assets/dataset.xyz"
+    filepath = "assets/points.xyz"
     
     try:
         xyzLoader = XYZLoader(filepath)
         classes, points = xyzLoader.load()
 
-        voxelsPoints = downsample_point_cloud(points=points, target_points=len(points) / 2)
+        voxelsPoints = downsample_point_cloud(points=points, target_points=len(points))
 
         print(f"Размер изначальный - {len(points)} точек")
         print(f"Размер вокселей - {len(voxelsPoints)} точек")
