@@ -1,7 +1,8 @@
 import numpy as np
 import os
 
-def save_points_to_xyz(points: np.ndarray, filepath: str = "./exports/points.xyz") -> None:
+def save_points_to_xyz(points: np.ndarray, filepath: str = "./exports/points.xyz",
+                       classes: np.ndarray = None) -> None:
     """
     Сохраняет массив точек в файл .xyz.
     Перезаписывает файл при каждом вызове.
@@ -23,6 +24,8 @@ def save_points_to_xyz(points: np.ndarray, filepath: str = "./exports/points.xyz
             raise OSError(f"Невозможно создать директорию '{dir_path}'. Проверьте права доступа.")
     
     # Сохраняем файл (np.savetxt автоматически перезаписывает существующий файл)
-    output_data = np.column_stack((np.zeros((points.shape[0], 1), dtype=int), points))
+    # classes — необязательно; без них, как и раньше, пишется класс 0
+    cls = np.zeros(points.shape[0], dtype=int) if classes is None else np.asarray(classes)
+    output_data = np.column_stack((cls, points))
     np.savetxt(filepath, output_data, fmt='%d %.6f %.6f %.6f')
     print(f"✅ Файл сохранен: {abs_path}")
