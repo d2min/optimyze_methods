@@ -4,6 +4,7 @@ from pathlib import Path
 
 from data.xyz_loader import XYZLoader
 from data.xyz_saver import save_points_to_xyz
+from optimization.normalization.zscore import ZScoreScaler
 from optimization.downsampling.voxel import downsample_point_cloud
 
 
@@ -48,11 +49,22 @@ def main() -> int:
     failures = 0
     for filepath in files:
         try:
+            zscore = ZScoreScaler()
             _, points = XYZLoader(str(filepath)).load()
+            
+            # Voxel downsampling
             voxel_points = downsample_point_cloud(
                 points=points,
                 target_points=len(points),
             )
+
+            # todo Filtration
+
+            # Получение ближайших точек
+
+            # Z-score
+            # todo добавить z-score матрице вида вектора ближних
+            voxel_points = zscore.fit_transform(voxel_points)
 
             print(f"{filepath.name}: {len(points)} точек → {len(voxel_points)} точек")
             save_points_to_xyz(
