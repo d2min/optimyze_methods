@@ -6,6 +6,7 @@ from data.xyz_loader import XYZLoader
 from data.xyz_saver import save_points_to_xyz
 from optimization.normalization.zscore import ZScoreScaler
 from optimization.downsampling.voxel import downsample_point_cloud
+from optimization.filtering import clean
 
 
 def clear_directory(directory: Path) -> None:
@@ -16,6 +17,15 @@ def clear_directory(directory: Path) -> None:
         elif path.is_dir():
             shutil.rmtree(path)
 
+
+def findTarget(len: int) -> int:
+    if len > 5_000_000:
+        return len / 5
+
+    if len > 1_000_000:
+        return len / 2
+    
+    return len
 
 def main() -> int:
     if len(sys.argv) < 2:
@@ -53,22 +63,24 @@ def main() -> int:
             _, points = XYZLoader(str(filepath)).load()
             
             # Voxel downsampling
-            voxel_points = downsample_point_cloud(
+            result_points = downsample_point_cloud(
                 points=points,
-                target_points=len(points),
+                target_points= findTarget(len=len(points)),
             )
 
-            # todo Filtration
+            # Filtration
+            result_clean = clean(result_points)
+            result_points = result_points[result_clean.keep]
 
             # Получение ближайших точек
 
             # Z-score
             # todo добавить z-score матрице вида вектора ближних
-            voxel_points = zscore.fit_transform(voxel_points)
+            result_points = zscore.fit_transform(result_points)
 
-            print(f"{filepath.name}: {len(points)} точек → {len(voxel_points)} точек")
+            print(f"{filepath.name}: {len(points)} точек → {len(result_points)} точек")
             save_points_to_xyz(
-                points=voxel_points,
+                points=result_points,
                 filepath=str(export_dir / filepath.name),
             )
         except Exception as error:

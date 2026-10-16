@@ -134,11 +134,15 @@ def downsample_point_cloud(points: np.ndarray, target_points: int) -> np.ndarray
        гарантируя, что геометрические признаки (границы, углы) не будут потеряны
 
     :param points: Массив координат формы (N, 3) типа float32 или float64.
-    :param target_points: Целевое количество точек после прореживания.
+    :param target_points: Максимальное количество точек после прореживания.
     :return: Массив прореженных точек формы (M, 3), где M <= target_points.
     """
     N = points.shape[0]
-    if N == 0 or target_points <= 0:
+    if target_points < 0:
+        raise ValueError("target_points не может быть отрицательным")
+    if target_points == 0:
+        return points[:0]
+    if N <= target_points:
         return points
 
     # ШАГ 1: Инициализация и оценка базового размера вокселя (V_base)
