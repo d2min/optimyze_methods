@@ -1,10 +1,4 @@
-"""
-Общие утилиты для фильтров шума.
-
-Все фильтры принимают points (N, 3) в любом dtype и возвращают булеву маску keep
-(True = точка остаётся). Маски легко комбинировать (&, |), сравнивать с разметкой
-и применять сразу к classes и points:  classes[keep], points[keep].
-"""
+"""Общие утилиты фильтров: перевод в локальные координаты, kd-дерево, шаг облака."""
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -31,17 +25,10 @@ def knn_mean_dist(points: np.ndarray, k: int, tree: cKDTree = None) -> np.ndarra
     return d[:, 1:].mean(axis=1)
 
 
-def neighbor_counts(query: np.ndarray, radius, tree: cKDTree) -> np.ndarray:
-    """Число соседей в радиусе (radius — скаляр или массив). Сама точка не считается,
-    если query — подмножество точек дерева."""
-    cnt = tree.query_ball_point(query, r=radius, return_length=True, workers=-1)
-    return np.asarray(cnt) - 1
-
-
 def density_scale(points: np.ndarray, k: int = 8, q: float = 0.9) -> float:
     """Характерный шаг облака: q-квантиль средней kNN-дистанции.
 
-    Удобная единица для радиусов/eps: ROR(radius=2*s), кластеры(voxel=1.5*s).
+    Единица для порогов ALS_PRESET: параметры с суффиксом _s умножаются на s.
     Высокий квантиль (а не медиана) — потому что плотность в ALS неоднородна
     (кусты ~2 см, земля ~12 см), и порог по медиане резал бы разреженную землю.
     """

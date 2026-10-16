@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import statistical, clusters, surface, height
+from . import clusters, height
 from ._common import density_scale
 
 LOW_NOISE, HIGH_NOISE = height.LOW_NOISE, height.HIGH_NOISE
@@ -55,11 +55,7 @@ def _resolve_scaled(params: dict, scale: float) -> dict:
 STEPS = {
     "hag": _hag_step,
     "column_gap": lambda p, c, **kw: height.column_gap_noise(p, **kw),
-    "sor": _mask_step(statistical.sor),
-    "ror": _mask_step(statistical.ror),
-    "lof": _mask_step(statistical.lof),
     "clusters": _mask_step(clusters.voxel_clusters),
-    "surface": _mask_step(surface.surface_residual),
 }
 
 # Пресет для аэролазерной съёмки (ALS). Порядок: от грубого и надёжного к тонкому.
