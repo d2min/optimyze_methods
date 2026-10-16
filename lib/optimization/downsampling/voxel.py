@@ -98,6 +98,9 @@ def _process_voxel_grid(points: np.ndarray, voxel_size: float, p_min: np.ndarray
     :param p_min: Минимальные координаты для сдвига.
     :return: Массив центроидов формы (M, 3).
     """
+    if points.shape[0] == 0:
+        return np.empty((0, 3), dtype=points.dtype)
+
     pts_shifted = points - p_min
     voxel_idx = np.floor(pts_shifted / voxel_size).astype(np.int32)
 
