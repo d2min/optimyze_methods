@@ -5,7 +5,10 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lib.optimization.downsampling.voxel import downsample_point_cloud  # noqa: E402
+from lib.optimization.downsampling.voxel import (  # noqa: E402
+    _process_voxel_grid,
+    downsample_point_cloud,
+)
 
 
 def test_returns_original_points_when_target_is_not_smaller():
@@ -42,6 +45,48 @@ def test_negative_target_is_rejected():
         assert "отрицательным" in str(error)
     else:
         raise AssertionError("Отрицательный target_points должен вызывать ValueError")
+
+
+def test_classes_stay_aligned_when_downsampling():
+    rng = np.random.default_rng(1)
+    points = rng.uniform(-10, 10, size=(200, 3))
+    classes = np.full(len(points), 6, dtype=np.int32)
+
+    result_points, result_classes = downsample_point_cloud(
+        points, target_points=20, classes=classes
+    )
+
+    assert len(result_points) == len(result_classes) <= 20
+    np.testing.assert_array_equal(result_classes, np.full(len(result_classes), 6))
+
+
+def test_classes_are_returned_unchanged_when_downsampling_is_not_needed():
+    points = np.arange(30, dtype=np.float64).reshape(10, 3)
+    classes = np.arange(10, dtype=np.int32)
+
+    result_points, result_classes = downsample_point_cloud(
+        points, target_points=10, classes=classes
+    )
+
+    assert result_points is points
+    assert result_classes is classes
+
+
+def test_voxel_class_is_the_most_common_input_class():
+    points = np.array([
+        [0.1, 0.1, 0.1],
+        [0.2, 0.1, 0.1],
+        [0.3, 0.1, 0.1],
+        [1.1, 0.1, 0.1],
+    ])
+    classes = np.array([2, 2, 6, 9], dtype=np.int32)
+
+    centroids, result_classes = _process_voxel_grid(
+        points, voxel_size=1.0, p_min=np.zeros(3), classes=classes
+    )
+
+    np.testing.assert_allclose(centroids[:, 0], [0.2, 1.1])
+    np.testing.assert_array_equal(result_classes, [2, 9])
 
 
 if __name__ == "__main__":

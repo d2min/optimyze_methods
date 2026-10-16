@@ -1,11 +1,17 @@
 """Поиск ближайших соседей по октаэдрической метрике."""
 from operator import index
 import sys
+from typing import Optional, Tuple, Union
 
 import numpy as np
 
 
-def k_folks(points: np.ndarray, k: int, show_progress: bool = True) -> np.ndarray:
+def k_folks(
+    points: np.ndarray,
+    k: int,
+    show_progress: bool = True,
+    classes: Optional[np.ndarray] = None,
+) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
     """Вернуть каждую точку вместе с k ближайшими соседями.
 
     Для каждой target-точки она считается началом координат. Радиус другой
@@ -26,6 +32,12 @@ def k_folks(points: np.ndarray, k: int, show_progress: bool = True) -> np.ndarra
         raise TypeError("points должен содержать числовые координаты")
     if not np.isfinite(points).all():
         raise ValueError("points не должен содержать NaN или бесконечные значения")
+    if classes is not None:
+        classes = np.asarray(classes)
+        if classes.ndim != 1 or len(classes) != len(points):
+            raise ValueError(
+                f"classes должен иметь форму ({len(points)},), получена форма {classes.shape}"
+            )
 
     try:
         k = index(k)
@@ -43,8 +55,15 @@ def k_folks(points: np.ndarray, k: int, show_progress: bool = True) -> np.ndarra
 
     neighbors = np.empty((n_points, k + 1, 3), dtype=points.dtype)
     neighbors[:, 0, :] = points
+    neighbor_classes = None
+    if classes is not None:
+        neighbor_classes = np.empty((n_points, k + 1), dtype=classes.dtype)
+        neighbor_classes[:, 0] = classes
     if k == 0 or n_points == 0:
-        return neighbors.reshape(n_points, 3 * (k + 1))
+        result = neighbors.reshape(n_points, 3 * (k + 1))
+        if neighbor_classes is not None:
+            return result, neighbor_classes
+        return result
 
     coordinates = points.astype(np.float64, copy=False)
     # Keep pairwise-distance and partition-index temporaries bounded.
@@ -68,6 +87,8 @@ def k_folks(points: np.ndarray, k: int, show_progress: bool = True) -> np.ndarra
         order = np.argsort(nearest_radii, axis=1, kind="stable")
         nearest = np.take_along_axis(nearest, order, axis=1)
         neighbors[start:stop, 1:, :] = points[nearest]
+        if neighbor_classes is not None:
+            neighbor_classes[start:stop, 1:] = classes[nearest]
 
         completed = stop
         if show_progress and (completed >= next_progress or completed == n_points):
@@ -80,4 +101,7 @@ def k_folks(points: np.ndarray, k: int, show_progress: bool = True) -> np.ndarra
     if show_progress:
         print(file=sys.stderr)
 
-    return neighbors.reshape(n_points, 3 * (k + 1))
+    result = neighbors.reshape(n_points, 3 * (k + 1))
+    if neighbor_classes is not None:
+        return result, neighbor_classes
+    return result

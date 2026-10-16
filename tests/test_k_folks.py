@@ -34,6 +34,24 @@ def test_keeps_input_dtype_and_handles_zero_neighbors():
     np.testing.assert_array_equal(result, points)
 
 
+def test_returns_classes_for_target_and_each_neighbor():
+    points = np.array([
+        [0.0, 0.0, 0.0],
+        [3.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 4.0, 0.0],
+    ])
+    classes = np.array([2, 6, 9, 10], dtype=np.int32)
+
+    neighbors, neighbor_classes = k_folks(
+        points, k=2, classes=classes, show_progress=False
+    )
+
+    assert neighbors.shape == (4, 9)
+    assert neighbor_classes.shape == (4, 3)
+    np.testing.assert_array_equal(neighbor_classes[0], [2, 9, 6])
+
+
 def test_rejects_invalid_k_and_point_shape():
     points = np.zeros((2, 3))
     for invalid_k in (-1, 2, 1.5):
