@@ -66,6 +66,25 @@ class ZScoreScaler:
         """fit() и transform() по одной и той же матрице."""
         return self.fit(points).transform(points)
 
+    def fit_transform_k_folks(self, neighbors: np.ndarray) -> np.ndarray:
+        """Нормализовать результат k_folks, сохранив его двумерную форму.
+
+        Ожидается матрица ``(N, 3 * (k + 1))``: в каждой строке записаны
+        координаты target-точки и её соседей подряд. Статистики считаются по
+        всем XYZ-тройкам матрицы, затем применяются отдельно к каждой тройке.
+        """
+        matrix = np.asarray(neighbors)
+        if matrix.ndim != 2 or matrix.shape[1] == 0 or matrix.shape[1] % 3 != 0:
+            raise ValueError(
+                "fit_transform_k_folks: ожидается матрица формы "
+                "(N, 3 * (k + 1)), получено "
+                f"{matrix.shape}"
+            )
+
+        xyz = matrix.reshape(-1, 3)
+        normalized = self.fit_transform(xyz)
+        return normalized.reshape(matrix.shape)
+
     def inverse_transform(self, points: np.ndarray) -> np.ndarray:
         """Обратно в исходные единицы: points * std + mean.
 

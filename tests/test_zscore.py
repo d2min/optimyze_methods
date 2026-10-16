@@ -34,6 +34,30 @@ def test_fit_transform_gives_zero_mean_unit_std_per_axis():
     np.testing.assert_allclose(out.std(0), 1, atol=1e-5)
 
 
+def test_fit_transform_k_folks_preserves_matrix_shape_and_normalizes_xyz_groups():
+    points = rng.normal([10, -4, 100], [2, 3, 5], size=(200, 3))
+    neighbors = np.concatenate([points, points + [1, -2, 3]], axis=1)
+    scaler = ZScoreScaler()
+
+    out = scaler.fit_transform_k_folks(neighbors)
+
+    assert out.shape == neighbors.shape
+    assert out.dtype == np.float32
+    xyz_groups = out.reshape(-1, 3)
+    np.testing.assert_allclose(xyz_groups.mean(axis=0), 0, atol=1e-6)
+    np.testing.assert_allclose(xyz_groups.std(axis=0), 1, atol=1e-6)
+    assert scaler.n_samples_ == neighbors.shape[0] * 2
+
+
+def test_fit_transform_k_folks_rejects_invalid_shape():
+    try:
+        ZScoreScaler().fit_transform_k_folks(np.zeros((5, 4)))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Число столбцов, не кратное 3, должно вызвать ValueError")
+
+
 def test_output_is_float32_and_input_not_modified():
     for dt in (np.float64, np.float32, np.int64):
         p = (rng.normal(size=(100, 3)) * 10).astype(dt)
