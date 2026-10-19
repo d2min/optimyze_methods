@@ -3,7 +3,8 @@ import sys
 from pathlib import Path
 
 from data.xyz_loader import XYZLoader
-from data.xyz_saver import save_points_to_xyz
+from data.xyz_export import export_k_folks_to_csv, export_points_to_csv
+from optimization.k_folks import k_folks
 from optimization.normalization.zscore import ZScoreScaler
 from optimization.downsampling.voxel import downsample_point_cloud
 from optimization.filtering import clean
@@ -19,11 +20,20 @@ def clear_directory(directory: Path) -> None:
 
 
 def findTarget(len: int) -> int:
+    if len > 10_000_000:
+        return len // 10
+    
     if len > 5_000_000:
-        return len / 5
+        return len // 5
 
-    if len > 1_000_000:
-        return len / 2
+    if len > 3_000_000:
+        return len // 3
+
+    if len > 500_000:
+        return len // 2
+
+    if len > 100_000:
+        return len - 1
     
     return len
 
@@ -59,30 +69,53 @@ def main() -> int:
     failures = 0
     for filepath in files:
         try:
+            print(f"\n------------------- Обработка {filepath.name} ---------------------")
+
             zscore = ZScoreScaler()
-            _, points = XYZLoader(str(filepath)).load()
+            classes, points = XYZLoader(str(filepath)).load()
             
             # Voxel downsampling
-            result_points = downsample_point_cloud(
+            result_points, result_classes = downsample_point_cloud(
                 points=points,
                 target_points= findTarget(len=len(points)),
+                classes=classes,
             )
 
             # Filtration
-            result_clean = clean(result_points)
+            result_clean = clean(result_points, result_classes)
             result_points = result_points[result_clean.keep]
+            result_classes = result_classes[result_clean.keep]
 
             # Получение ближайших точек
+            folks_result, folks_classes = k_folks(
+                points=result_points, k=400, classes=result_classes
+            )
 
             # Z-score
-            # todo добавить z-score матрице вида вектора ближних
-            result_points = zscore.fit_transform(result_points)
+            folks_result = zscore.fit_transform_k_folks(folks_result)
+            print(f"Z-score для folks точек прошла")
 
-            print(f"{filepath.name}: {len(points)} точек → {len(result_points)} точек")
-            save_points_to_xyz(
+            result_points = zscore.fit_transform(result_points)
+            print(f"Z-score для облока точек прошла")
+
+            output_path = export_dir / f"{filepath.stem}.csv"
+            export_points_to_csv(
                 points=result_points,
-                filepath=str(export_dir / filepath.name),
+                filepath=output_path,
+                classes=result_classes,
             )
+            print(f"Успешный импорт облока")
+
+            output_path = export_dir / f"{filepath.stem}_k_folks.csv"
+            export_k_folks_to_csv(
+                neighbors=folks_result,
+                filepath=output_path,
+                classes=folks_classes,
+            )
+            print(f"Успешный импорт folks точек")
+
+            print(f"--------------------------------------------------------------")
+
         except Exception as error:
             failures += 1
             print(f"❌ Ошибка при обработке {filepath.name}: {error}")

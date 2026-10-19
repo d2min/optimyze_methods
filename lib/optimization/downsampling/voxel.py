@@ -1,3 +1,5 @@
+from typing import Optional, Tuple, Union
+
 import numpy as np
 
 
@@ -88,7 +90,8 @@ def _compute_curvature_via_pca(points: np.ndarray, voxel_size: float) -> np.ndar
     return curvature
 
 
-def _process_voxel_grid(points: np.ndarray, voxel_size: float, p_min: np.ndarray) -> np.ndarray:
+def _process_voxel_grid(points: np.ndarray, voxel_size: float, p_min: np.ndarray,
+                        classes: Optional[np.ndarray] = None):
     """
     Внутренняя векторизованная функция для обработки воксельной сетки.
     Выполняет квантование, хеширование и вычисление центроидов.
@@ -96,10 +99,14 @@ def _process_voxel_grid(points: np.ndarray, voxel_size: float, p_min: np.ndarray
     :param points: Массив координат формы (N, 3).
     :param voxel_size: Размер вокселя.
     :param p_min: Минимальные координаты для сдвига.
-    :return: Массив центроидов формы (M, 3).
+    :return: Массив центроидов формы (M, 3), а при переданных классах —
+             также наиболее частый класс каждой группы.
     """
     if points.shape[0] == 0:
-        return np.empty((0, 3), dtype=points.dtype)
+        centroids = np.empty((0, 3), dtype=points.dtype)
+        if classes is None:
+            return centroids
+        return centroids, np.empty(0, dtype=classes.dtype)
 
     pts_shifted = points - p_min
     voxel_idx = np.floor(pts_shifted / voxel_size).astype(np.int32)
@@ -118,10 +125,27 @@ def _process_voxel_grid(points: np.ndarray, voxel_size: float, p_min: np.ndarray
             inverse_indices, weights=points[:, i], minlength=num_voxels
         ) / counts
 
+    if classes is not None:
+        voxel_classes = np.empty(num_voxels, dtype=classes.dtype)
+        class_counts = np.zeros(num_voxels, dtype=np.int64)
+        for point_class in np.unique(classes):
+            class_mask = classes == point_class
+            current_counts = np.bincount(
+                inverse_indices[class_mask], minlength=num_voxels
+            )
+            replace = current_counts > class_counts
+            voxel_classes[replace] = point_class
+            class_counts[replace] = current_counts[replace]
+        return centroids, voxel_classes
+
     return centroids
 
 
-def downsample_point_cloud(points: np.ndarray, target_points: int) -> np.ndarray:
+def downsample_point_cloud(
+    points: np.ndarray,
+    target_points: int,
+    classes: Optional[np.ndarray] = None,
+) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
     """
     Основной конвейер прореживания облака точек с адаптивной кривизной.
 
@@ -135,14 +159,27 @@ def downsample_point_cloud(points: np.ndarray, target_points: int) -> np.ndarray
 
     :param points: Массив координат формы (N, 3) типа float32 или float64.
     :param target_points: Максимальное количество точек после прореживания.
-    :return: Массив прореженных точек формы (M, 3), где M <= target_points.
+    :param classes: Необязательная метка каждой исходной точки формы (N,).
+    :return: При отсутствии classes — массив точек (M, 3). При переданных
+             classes — кортеж (точки, метки), где метка центроида является
+             наиболее частой меткой исходных точек в его вокселе.
     """
     N = points.shape[0]
+    if classes is not None:
+        classes = np.asarray(classes)
+        if classes.ndim != 1 or len(classes) != N:
+            raise ValueError(
+                f"classes должен иметь форму ({N},), получена форма {classes.shape}"
+            )
     if target_points < 0:
         raise ValueError("target_points не может быть отрицательным")
     if target_points == 0:
-        return points[:0]
+        if classes is None:
+            return points[:0]
+        return points[:0], classes[:0]
     if N <= target_points:
+        if classes is not None:
+            return points, classes
         return points
 
     # ШАГ 1: Инициализация и оценка базового размера вокселя (V_base)
@@ -158,6 +195,8 @@ def downsample_point_cloud(points: np.ndarray, target_points: int) -> np.ndarray
     if N > 10_000_000:
         indices = np.random.choice(N, 10_000_000, replace=False)
         points = points[indices]
+        if classes is not None:
+            classes = classes[indices]
         N = 10_000_000
 
     # ШАГ 3: Вычисление кривизны через PCA на воксельной сетке
@@ -174,11 +213,18 @@ def downsample_point_cloud(points: np.ndarray, target_points: int) -> np.ndarray
     low_mask = ~high_mask
 
     pts_high, pts_low = points[high_mask], points[low_mask]
+    classes_high = None if classes is None else classes[high_mask]
+    classes_low = None if classes is None else classes[low_mask]
 
     # Обработка зон с высокой детализацией (уменьшенный воксель для сохранения деталей)
-    voxels_high = _process_voxel_grid(pts_high, V_base * 0.5, p_min)
+    high_result = _process_voxel_grid(pts_high, V_base * 0.5, p_min, classes_high)
     # Обработка зон с низкой детализацией (базовый воксель)
-    voxels_low = _process_voxel_grid(pts_low, V_base, p_min)
+    low_result = _process_voxel_grid(pts_low, V_base, p_min, classes_low)
+    if classes is None:
+        voxels_high, voxels_low = high_result, low_result
+    else:
+        voxels_high, labels_high = high_result
+        voxels_low, labels_low = low_result
 
     # ШАГ 4: Умное отсечение с приоритетом зон высокой кривизны
     # Гарантируем, что геометрические признаки (границы, углы) сохранятся в первую очередь
@@ -191,11 +237,15 @@ def downsample_point_cloud(points: np.ndarray, target_points: int) -> np.ndarray
         # (дальнейшее уточнение потребовало бы повторного PCA, что дорого).
         indices = np.random.choice(n_high, target_points, replace=False)
         downsampled_points = voxels_high[indices]
+        if classes is not None:
+            downsampled_classes = labels_high[indices]
 
     elif n_high + n_low <= target_points:
         # Случай B: Даже объединение обеих зон не превышает лимит.
         # Берём всё — дополнительное прореживание не нужно.
         downsampled_points = np.vstack((voxels_high, voxels_low))
+        if classes is not None:
+            downsampled_classes = np.concatenate((labels_high, labels_low))
 
     else:
         # Случай C (основной): High-зона помещается, добираем остаток из Low-зоны.
@@ -203,5 +253,9 @@ def downsample_point_cloud(points: np.ndarray, target_points: int) -> np.ndarray
         remaining = target_points - n_high
         indices = np.random.choice(n_low, remaining, replace=False)
         downsampled_points = np.vstack((voxels_high, voxels_low[indices]))
+        if classes is not None:
+            downsampled_classes = np.concatenate((labels_high, labels_low[indices]))
 
+    if classes is not None:
+        return downsampled_points, downsampled_classes
     return downsampled_points
