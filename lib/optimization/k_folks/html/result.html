@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Оптимизация k_folks: O(N²) → O(N log N + Nk)</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: #0e1117;
+            color: #e6edf3;
+            padding: 20px;
+        }
+
+        h1 {
+            font-size: 22px;
+            margin: 0 0 4px;
+        }
+
+        .sub {
+            color: #8b949e;
+            margin-bottom: 18px;
+            font-size: 14px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 14px;
+            align-items: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .controls label {
+            font-size: 13px;
+            color: #8b949e;
+        }
+
+        .controls input[type=range] {
+            vertical-align: middle;
+        }
+
+        .controls button {
+            background: #238636;
+            color: white;
+            border: 0;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .controls button:hover {
+            background: #2ea043;
+        }
+
+        .controls button.secondary {
+            background: #30363d;
+        }
+
+        .controls button.secondary:hover {
+            background: #484f58;
+        }
+
+        .panels {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .panel {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .panel h2 {
+            margin: 0 0 6px;
+            font-size: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .badge {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #30363d;
+            color: #c9d1d9;
+            font-weight: normal;
+        }
+
+        .badge.bad {
+            background: #6e1b1b;
+            color: #ffb4b4;
+        }
+
+        .badge.good {
+            background: #1b4d2e;
+            color: #aff5b4;
+        }
+
+        .stats {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: #8b949e;
+            margin: 8px 0;
+        }
+
+        .stats b {
+            color: #e6edf3;
+            font-variant-numeric: tabular-nums;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            border-radius: 6px;
+            background: #0d1117;
+        }
+
+        .chart {
+            margin-top: 20px;
+        }
+
+        .legend {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: #8b949e;
+            margin-top: 8px;
+        }
+
+        .legend span::before {
+            content: "";
+            display: inline-block;
+            width: 12px;
+            height: 3px;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        .legend .old::before {
+            background: #f85149;
+        }
+
+        .legend .new::before {
+            background: #3fb950;
+        }
+
+        @media (max-width: 800px) {
+            .panels {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Оптимизация поиска k_folks</h1>
+    <div class="sub">Слева — старый алгоритм: полный попарный перебор. Справа — новый: k-D дерево + k ближайших соседей.
+    </div>
+
+    <div class="controls">
+        <label>N = <input type="range" id="nSlider" min="20" max="120" value="60"> <span id="nVal">60</span></label>
+        <label>k = <input type="range" id="kSlider" min="2" max="8" value="4"> <span id="kVal">4</span></label>
+        <label>Скорость: <input type="range" id="sSlider" min="1" max="10" value="4"></label>
+        <button id="startBtn">▶ Запустить</button>
+        <button id="resetBtn" class="secondary">↻ Сбросить</button>
+    </div>
+
+    <div class="panels">
+        <div class="panel">
+            <h2>До: попарный перебор <span class="badge bad">O(N²)</span></h2>
+            <div class="stats">
+                <div>Сравнений: <b id="oldCmp">0</b> / <span id="oldCmpTotal">0</span></div>
+                <div>Линий: <b id="oldLines">0</b></div>
+            </div>
+            <canvas id="oldCanvas" height="360"></canvas>
+        </div>
+        <div class="panel">
+            <h2>После: k-D дерево <span class="badge good">O(N log N + Nk)</span></h2>
+            <div class="stats">
+                <div>Операций: <b id="newCmp">0</b> / <span id="newCmpTotal">0</span></div>
+                <div>Линий: <b id="newLines">0</b></div>
+            </div>
+            <canvas id="newCanvas" height="360"></canvas>
+        </div>
+    </div>
+
+    <div class="panel chart">
+        <h2>Рост числа операций от N (при фиксированном k)</h2>
+        <canvas id="chartCanvas" height="220"></canvas>
+        <div class="legend">
+            <span class="old">Старый: N(N−1)/2</span>
+            <span class="new">Новый: N·log₂N + N·k</span>
+        </div>
+    </div>
+
+    <script>
+        (() => {
+            const nSlider = document.getElementById('nSlider');
+            const kSlider = document.getElementById('kSlider');
+            const sSlider = document.getElementById('sSlider');
+            const nVal = document.getElementById('nVal');
+            const kVal = document.getElementById('kVal');
+            const startBtn = document.getElementById('startBtn');
+            const resetBtn = document.getElementById('resetBtn');
+
+            const oldCanvas = document.getElementById('oldCanvas');
+            const newCanvas = document.getElementById('newCanvas');
+            const chartCanvas = document.getElementById('chartCanvas');
+
+            const oldCtx = oldCanvas.getContext('2d');
+            const newCtx = newCanvas.getContext('2d');
+            const chartCtx = chartCanvas.getContext('2d');
+
+            function fitCanvas(c) {
+                const dpr = window.devicePixelRatio || 1;
+                const rect = c.getBoundingClientRect();
+                c.width = rect.width * dpr;
+                c.height = rect.height * dpr;
+                c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+                return { w: rect.width, h: rect.height };
+            }
+
+            let points = [];
+            let running = false;
+            let animId = null;
+
+            // ---- Состояние анимаций ----
+            let oldState = null;
+            let newState = null;
+
+            function randPoints(n, w, h) {
+                const pts = [];
+                const pad = 14;
+                for (let i = 0; i < n; i++) {
+                    pts.push({
+                        x: pad + Math.random() * (w - 2 * pad),
+                        y: pad + Math.random() * (h - 2 * pad)
+                    });
+                }
+                return pts;
+            }
+
+            // --- Старый алгоритм: все пары ---
+            function initOld() {
+                const { w, h } = fitCanvas(oldCanvas);
+                const pairs = [];
+                for (let i = 0; i < points.length; i++)
+                    for (let j = i + 1; j < points.length; j++)
+                        pairs.push([i, j]);
+                oldState = {
+                    w, h,
+                    pairs,
+                    idx: 0,
+                    drawnPairs: [],
+                    cmp: 0,
+                    total: pairs.length
+                };
+                document.getElementById('oldCmpTotal').textContent = pairs.length;
+            }
+
+            // --- Новый алгоритм: kd-tree + k соседей ---
+            // Строим 2D kd-tree, рисуем рекурсивное разбиение.
+            function buildKD(pts, depth = 0) {
+                if (pts.length === 0) return null;
+                const axis = depth % 2;
+                pts.sort((a, b) => axis === 0 ? a.x - b.x : a.y - b.y);
+                const mid = pts.length >> 1;
+                return {
+                    point: pts[mid],
+                    idx: pts[mid].idx,
+                    axis,
+                    left: buildKD(pts.slice(0, mid), depth + 1),
+                    right: buildKD(pts.slice(mid + 1), depth + 1)
+                };
+            }
+
+            // Собираем список "разделителей" — прямоугольников/линий разбиения для отрисовки.
+            function collectSplits(node, minX, minY, maxX, maxY, out) {
+                if (!node) return;
+                const { axis, point } = node;
+                if (axis === 0) {
+                    out.push({ type: 'v', x: point.x, y0: minY, y1: maxY, depth: out.length });
+                    collectSplits(node.left, minX, minY, point.x, maxY, out);
+                    collectSplits(node.right, point.x, minY, maxX, maxY, out);
+                } else {
+                    out.push({ type: 'h', y: point.y, x0: minX, x1: maxX, depth: out.length });
+                    collectSplits(node.left, minX, minY, maxX, point.y, out);
+                    collectSplits(node.right, minX, point.y, maxX, maxY, out);
+                }
+            }
+
+            // k ближайших соседей по L1
+            function kNearest(i, k) {
+                const p = points[i];
+                const arr = [];
+                for (let j = 0; j < points.length; j++) {
+                    if (j === i) continue;
+                    const d = Math.abs(p.x - points[j].x) + Math.abs(p.y - points[j].y);
+                    arr.push({ j, d });
+                }
+                arr.sort((a, b) => a.d - b.d);
+                return arr.slice(0, k);
+            }
+
+            function initNew() {
+                const { w, h } = fitCanvas(newCanvas);
+                const k = parseInt(kSlider.value, 10);
+
+                // kd-tree
+                const indexed = points.map((p, i) => ({ ...p, idx: i }));
+                const root = buildKD(indexed.slice());
+                const splits = [];
+                collectSplits(root, 0, 0, w, h, splits);
+
+                // Список "запросов соседей": для каждой точки — k линий
+                const queries = [];
+                for (let i = 0; i < points.length; i++) {
+                    const neigh = kNearest(i, k);
+                    for (const n of neigh) queries.push([i, n.j]);
+                }
+
+                // Оценка "операций": построение ~ N log N, запросы ~ N log N + Nk
+                const buildCost = Math.round(points.length * Math.log2(points.length + 1));
+                const queryCost = Math.round(points.length * Math.log2(points.length + 1) + points.length * k);
+                const totalCost = buildCost + queryCost;
+
+                newState = {
+                    w, h, k,
+                    splits,
+                    splitIdx: 0,
+                    queries,
+                    queryIdx: 0,
+                    phase: 'build', // 'build' -> 'query'
+                    cmp: 0,
+                    total: totalCost,
+                    buildCost,
+                    queryCost
+                };
+                document.getElementById('newCmpTotal').textContent = totalCost;
+            }
+
+            function drawOld() {
+                const { w, h, pairs, idx, drawnPairs } = oldState;
+                oldCtx.clearRect(0, 0, w, h);
+
+                // уже проведённые линии — блёклые
+                oldCtx.strokeStyle = 'rgba(248,81,73,0.18)';
+                oldCtx.lineWidth = 1;
+                oldCtx.beginPath();
+                for (const [i, j] of drawnPairs) {
+                    oldCtx.moveTo(points[i].x, points[i].y);
+                    oldCtx.lineTo(points[j].x, points[j].y);
+                }
+                oldCtx.stroke();
+
+                // активная линия — яркая
+                if (idx < pairs.length) {
+                    const [i, j] = pairs[idx];
+                    oldCtx.strokeStyle = 'rgba(248,81,73,0.95)';
+                    oldCtx.lineWidth = 1.5;
+                    oldCtx.beginPath();
+                    oldCtx.moveTo(points[i].x, points[i].y);
+                    oldCtx.lineTo(points[j].x, points[j].y);
+                    oldCtx.stroke();
+                }
+
+                // точки
+                for (let i = 0; i < points.length; i++) {
+                    oldCtx.fillStyle = '#e6edf3';
+                    oldCtx.beginPath();
+                    oldCtx.arc(points[i].x, points[i].y, 2.5, 0, Math.PI * 2);
+                    oldCtx.fill();
+                }
+
+                document.getElementById('oldCmp').textContent = idx;
+                document.getElementById('oldLines').textContent = drawnPairs.length;
+            }
+
+            function drawNew() {
+                const { w, h, splits, splitIdx, queries, queryIdx, phase } = newState;
+                newCtx.clearRect(0, 0, w, h);
+
+                // линии разбиения
+                newCtx.strokeStyle = 'rgba(88,166,255,0.35)';
+                newCtx.lineWidth = 1;
+                newCtx.beginPath();
+                for (let i = 0; i < splitIdx; i++) {
+                    const s = splits[i];
+                    if (s.type === 'v') {
+                        newCtx.moveTo(s.x, s.y0); newCtx.lineTo(s.x, s.y1);
+                    } else {
+                        newCtx.moveTo(s.x0, s.y); newCtx.lineTo(s.x1, s.y);
+                    }
+                }
+                newCtx.stroke();
+
+                // активный разделитель
+                if (phase === 'build' && splitIdx < splits.length) {
+                    const s = splits[splitIdx];
+                    newCtx.strokeStyle = 'rgba(88,166,255,0.95)';
+                    newCtx.lineWidth = 1.5;
+                    newCtx.beginPath();
+                    if (s.type === 'v') {
+                        newCtx.moveTo(s.x, s.y0); newCtx.lineTo(s.x, s.y1);
+                    } else {
+                        newCtx.moveTo(s.x0, s.y); newCtx.lineTo(s.x1, s.y);
+                    }
+                    newCtx.stroke();
+                }
+
+                // линии соседей
+                newCtx.strokeStyle = 'rgba(63,185,80,0.18)';
+                newCtx.lineWidth = 1;
+                newCtx.beginPath();
+                for (let i = 0; i < queryIdx; i++) {
+                    const [a, b] = queries[i];
+                    newCtx.moveTo(points[a].x, points[a].y);
+                    newCtx.lineTo(points[b].x, points[b].y);
+                }
+                newCtx.stroke();
+
+                // активные линии — последние k (один запрос)
+                if (phase === 'query' && queryIdx > 0) {
+                    const k = newState.k;
+                    const from = Math.max(0, queryIdx - k);
+                    newCtx.strokeStyle = 'rgba(63,185,80,0.95)';
+                    newCtx.lineWidth = 1.5;
+                    newCtx.beginPath();
+                    for (let i = from; i < queryIdx; i++) {
+                        const [a, b] = queries[i];
+                        newCtx.moveTo(points[a].x, points[a].y);
+                        newCtx.lineTo(points[b].x, points[b].y);
+                    }
+                    newCtx.stroke();
+                }
+
+                // точки
+                for (let i = 0; i < points.length; i++) {
+                    newCtx.fillStyle = '#e6edf3';
+                    newCtx.beginPath();
+                    newCtx.arc(points[i].x, points[i].y, 2.5, 0, Math.PI * 2);
+                    newCtx.fill();
+                }
+
+                document.getElementById('newCmp').textContent = newState.cmp;
+                document.getElementById('newLines').textContent = queryIdx;
+            }
+
+            function step() {
+                const speed = parseInt(sSlider.value, 10);
+
+                // --- Old ---
+                if (oldState.idx < oldState.total) {
+                    const stepOld = Math.max(1, Math.floor(speed * 2));
+                    for (let s = 0; s < stepOld && oldState.idx < oldState.total; s++) {
+                        oldState.drawnPairs.push(oldState.pairs[oldState.idx]);
+                        oldState.idx++;
+                    }
+                }
+                drawOld();
+
+                // --- New ---
+                if (newState.phase === 'build') {
+                    const stepBuild = Math.max(1, Math.floor(speed * 3));
+                    for (let s = 0; s < stepBuild && newState.splitIdx < newState.splits.length; s++) {
+                        newState.splitIdx++;
+                        newState.cmp = Math.min(newState.total,
+                            Math.round(newState.buildCost * newState.splitIdx / newState.splits.length));
+                    }
+                    if (newState.splitIdx >= newState.splits.length) {
+                        newState.phase = 'query';
+                    }
+                } else {
+                    const stepQ = Math.max(1, Math.floor(speed * 2));
+                    for (let s = 0; s < stepQ && newState.queryIdx < newState.queries.length; s++) {
+                        newState.queryIdx++;
+                    }
+                    const qFrac = newState.queryIdx / newState.queries.length;
+                    newState.cmp = Math.min(newState.total,
+                        newState.buildCost + Math.round(newState.queryCost * qFrac));
+                }
+                drawNew();
+
+                const doneOld = oldState.idx >= oldState.total;
+                const doneNew = newState.queryIdx >= newState.queries.length;
+                if (doneOld && doneNew) {
+                    running = false;
+                    startBtn.textContent = '▶ Запустить';
+                    return;
+                }
+                animId = requestAnimationFrame(step);
+            }
+
+            function start() {
+                if (running) {
+                    running = false;
+                    startBtn.textContent = '▶ Запустить';
+                    if (animId) cancelAnimationFrame(animId);
+                    return;
+                }
+                if (!oldState || !newState) reset();
+                running = true;
+                startBtn.textContent = '⏸ Пауза';
+                animId = requestAnimationFrame(step);
+            }
+
+            function reset() {
+                if (animId) cancelAnimationFrame(animId);
+                running = false;
+                startBtn.textContent = '▶ Запустить';
+                const { w, h } = fitCanvas(oldCanvas);
+                points = randPoints(parseInt(nSlider.value, 10), w, h);
+                initOld();
+                initNew();
+                drawOld();
+                drawNew();
+                drawChart();
+            }
+
+            // --- График ---
+            function drawChart() {
+                const { w, h } = fitCanvas(chartCanvas);
+                chartCtx.clearRect(0, 0, w, h);
+
+                const padL = 50, padR = 20, padT = 14, padB = 30;
+                const plotW = w - padL - padR;
+                const plotH = h - padT - padB;
+
+                const k = parseInt(kSlider.value, 10);
+                const Nmax = 2000;
+                const Ncur = parseInt(nSlider.value, 10);
+
+                const fOld = N => N * (N - 1) / 2;
+                const fNew = N => N * Math.log2(N + 1) + N * k;
+
+                let yMax = 1;
+                for (let N = 10; N <= Nmax; N += 10) {
+                    yMax = Math.max(yMax, fOld(N), fNew(N));
+                }
+
+                // оси
+                chartCtx.strokeStyle = '#30363d';
+                chartCtx.lineWidth = 1;
+                chartCtx.beginPath();
+                chartCtx.moveTo(padL, padT);
+                chartCtx.lineTo(padL, padT + plotH);
+                chartCtx.lineTo(padL + plotW, padT + plotH);
+                chartCtx.stroke();
+
+                // подписи
+                chartCtx.fillStyle = '#8b949e';
+                chartCtx.font = '11px sans-serif';
+                chartCtx.textAlign = 'right';
+                for (let i = 0; i <= 4; i++) {
+                    const y = padT + plotH - (i / 4) * plotH;
+                    const v = (yMax * i / 4);
+                    chartCtx.fillText(v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v.toFixed(0), padL - 6, y + 3);
+                    chartCtx.strokeStyle = '#21262d';
+                    chartCtx.beginPath();
+                    chartCtx.moveTo(padL, y); chartCtx.lineTo(padL + plotW, y);
+                    chartCtx.stroke();
+                }
+                chartCtx.textAlign = 'center';
+                for (let N = 0; N <= Nmax; N += 500) {
+                    const x = padL + (N / Nmax) * plotW;
+                    chartCtx.fillText(N, x, padT + plotH + 16);
+                }
+                chartCtx.fillText('N', padL + plotW / 2, padT + plotH + 28);
+
+                // кривая старый
+                chartCtx.strokeStyle = '#f85149';
+                chartCtx.lineWidth = 2;
+                chartCtx.beginPath();
+                for (let N = 1; N <= Nmax; N += 4) {
+                    const x = padL + (N / Nmax) * plotW;
+                    const y = padT + plotH - (fOld(N) / yMax) * plotH;
+                    if (N === 1) chartCtx.moveTo(x, y); else chartCtx.lineTo(x, y);
+                }
+                chartCtx.stroke();
+
+                // кривая новый
+                chartCtx.strokeStyle = '#3fb950';
+                chartCtx.lineWidth = 2;
+                chartCtx.beginPath();
+                for (let N = 1; N <= Nmax; N += 4) {
+                    const x = padL + (N / Nmax) * plotW;
+                    const y = padT + plotH - (fNew(N) / yMax) * plotH;
+                    if (N === 1) chartCtx.moveTo(x, y); else chartCtx.lineTo(x, y);
+                }
+                chartCtx.stroke();
+
+                // вертикальная метка текущего N
+                const xCur = padL + (Ncur / Nmax) * plotW;
+                chartCtx.strokeStyle = '#8b949e';
+                chartCtx.setLineDash([4, 4]);
+                chartCtx.beginPath();
+                chartCtx.moveTo(xCur, padT); chartCtx.lineTo(xCur, padT + plotH);
+                chartCtx.stroke();
+                chartCtx.setLineDash([]);
+
+                // точки на кривых
+                const yOld = padT + plotH - (fOld(Ncur) / yMax) * plotH;
+                const yNew = padT + plotH - (fNew(Ncur) / yMax) * plotH;
+                chartCtx.fillStyle = '#f85149';
+                chartCtx.beginPath(); chartCtx.arc(xCur, yOld, 4, 0, Math.PI * 2); chartCtx.fill();
+                chartCtx.fillStyle = '#3fb950';
+                chartCtx.beginPath(); chartCtx.arc(xCur, yNew, 4, 0, Math.PI * 2); chartCtx.fill();
+
+                // подписи значений
+                chartCtx.font = '11px sans-serif';
+                chartCtx.textAlign = 'left';
+                chartCtx.fillStyle = '#f85149';
+                chartCtx.fillText('N²/2 ≈ ' + Math.round(fOld(Ncur)).toLocaleString('ru-RU'), xCur + 6, yOld - 4);
+                chartCtx.fillStyle = '#3fb950';
+                chartCtx.fillText('N·log N + Nk ≈ ' + Math.round(fNew(Ncur)).toLocaleString('ru-RU'), xCur + 6, yNew + 12);
+            }
+
+            // --- События ---
+            nSlider.addEventListener('input', () => {
+                nVal.textContent = nSlider.value;
+                reset();
+            });
+            kSlider.addEventListener('input', () => {
+                kVal.textContent = kSlider.value;
+                reset();
+            });
+            sSlider.addEventListener('input', () => { });
+            startBtn.addEventListener('click', start);
+            resetBtn.addEventListener('click', reset);
+            window.addEventListener('resize', () => {
+                reset();
+            });
+
+            reset();
+        })();
+    </script>
+
+</body>
+
+</html>

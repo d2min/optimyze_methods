@@ -4,6 +4,7 @@ import sys
 from typing import Optional, Tuple, Union
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 
 def k_folks(
@@ -20,8 +21,9 @@ def k_folks(
 
     Результат имеет форму ``(N, 3 * (k + 1))``. В каждой строке сначала идут
     XYZ target-точки, затем XYZ k соседей в порядке возрастания радиуса.
-    Полный перебор занимает O(N²) времени. Расстояния считаются блоками через
-    NumPy, поэтому промежуточная память ограничена размером одного блока.
+    Поиск выполняется через cKDTree с метрикой Манхэттена (p=1), совпадающей
+    с указанным радиусом. Ожидаемая сложность поиска — O(N log N + Nk),
+    худшая — O(N² + Nk).
 
     show_progress — отображать прогресс перебора в stderr.
     """
@@ -66,26 +68,23 @@ def k_folks(
         return result
 
     coordinates = points.astype(np.float64, copy=False)
-    # Keep pairwise-distance and partition-index temporaries bounded.
-    max_block_pairs = 2_000_000
-    block_rows = max(1, min(n_points, max_block_pairs // n_points))
+    tree = cKDTree(coordinates)
+    max_block_results = 2_000_000
     update_every = max(1, n_points // 100)
+    block_rows = max(
+        1, min(n_points, max_block_results // (k + 1), update_every)
+    )
     next_progress = update_every
-
     for start in range(0, n_points, block_rows):
         stop = min(start + block_rows, n_points)
-        block = coordinates[start:stop]
+        _, nearest = tree.query(coordinates[start:stop], k=k + 1, p=1)
+        nearest = np.asarray(nearest)
 
-        radii = np.abs(block[:, 0, None] - coordinates[None, :, 0])
-        radii += np.abs(block[:, 1, None] - coordinates[None, :, 1])
-        radii += np.abs(block[:, 2, None] - coordinates[None, :, 2])
-        rows = np.arange(stop - start)
-        radii[rows, start + rows] = np.inf
-
-        nearest = np.argpartition(radii, k - 1, axis=1)[:, :k]
-        nearest_radii = np.take_along_axis(radii, nearest, axis=1)
-        order = np.argsort(nearest_radii, axis=1, kind="stable")
-        nearest = np.take_along_axis(nearest, order, axis=1)
+        # Put the target index last when returned. With duplicate points it may
+        # be omitted; in that case the first k results are all valid neighbors.
+        self_indices = np.arange(start, stop)[:, None]
+        order = np.argsort(nearest == self_indices, axis=1, kind="stable")
+        nearest = np.take_along_axis(nearest, order, axis=1)[:, :k]
         neighbors[start:stop, 1:, :] = points[nearest]
         if neighbor_classes is not None:
             neighbor_classes[start:stop, 1:] = classes[nearest]

@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>KD-дерево: как строится и как ищет</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0e1117;
+    color: #e6edf3;
+    padding: 20px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #8b949e; margin-bottom: 18px; font-size: 14px; line-height: 1.5; }
+  .controls {
+    display: flex; gap: 14px; align-items: center;
+    margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .controls label { font-size: 13px; color: #8b949e; }
+  .controls button {
+    background: #238636; color: white; border: 0;
+    padding: 8px 16px; border-radius: 6px; cursor: pointer;
+    font-size: 13px;
+  }
+  .controls button:hover { background: #2ea043; }
+  .controls button.secondary { background: #30363d; }
+  .controls button.secondary:hover { background: #484f58; }
+  .panels {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 16px;
+  }
+  .panel {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .panel h2 {
+    margin: 0 0 6px; font-size: 15px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .hint { color: #8b949e; font-size: 12px; margin: 6px 0; }
+  canvas { display: block; width: 100%; border-radius: 6px; background: #0d1117; cursor: crosshair; }
+  .legend {
+    display: flex; gap: 14px; font-size: 12px; color: #8b949e;
+    margin-top: 10px; flex-wrap: wrap;
+  }
+  .legend span::before {
+    content: ""; display: inline-block; width: 12px; height: 3px;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .legend .axis-x::before { background: #58a6ff; }
+  .legend .axis-y::before { background: #bc8cff; }
+  .legend .active::before { background: #f0883e; }
+  .legend .pruned::before { background: #f85149; }
+  .legend .neigh::before { background: #3fb950; }
+  .info {
+    margin-top: 16px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .info b { color: #58a6ff; }
+  .info .step { color: #f0883e; font-weight: bold; }
+  @media (max-width: 900px) {
+    .panels { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>KD-дерево: как строится и как ищет</h1>
+<div class="sub">
+  Слева — облако точек и рекурсивное разбиение пространства. Справа — само дерево как иерархический граф.
+  Кликни по любой точке слева, чтобы увидеть, как дерево ищет её <b>k</b> ближайших соседей.
+</div>
+
+<div class="controls">
+  <label>N: <input type="range" id="nSlider" min="16" max="64" value="32" style="width:120px"> <span id="nVal">32</span></label>
+  <label>k: <input type="range" id="kSlider" min="2" max="6" value="3" style="width:80px"> <span id="kVal">3</span></label>
+  <button id="buildBtn">▶ Построить дерево</button>
+  <button id="stepBtn" class="secondary">⏭ Один шаг</button>
+  <button id="resetBtn" class="secondary">↻ Новые точки</button>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <h2>Облако точек и разбиение</h2>
+    <div class="hint">Кликни по точке — запустится поиск k соседей</div>
+    <canvas id="spaceCanvas" height="460"></canvas>
+    <div class="legend">
+      <span class="axis-x">разрез по X</span>
+      <span class="axis-y">разрез по Y</span>
+      <span class="active">активный узел</span>
+      <span class="pruned">отсечённая область</span>
+      <span class="neigh">найденные соседи</span>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Структура дерева</h2>
+    <div class="hint">В каждом узле — точка-разделитель. Слева — меньшие, справа — большие.</div>
+    <canvas id="treeCanvas" height="460"></canvas>
+  </div>
+</div>
+
+<div class="info" id="infoBox">
+  Нажми <b>«Построить дерево»</b>, чтобы увидеть пошаговое построение. Каждый шаг делит одну область пространства пополам — сначала по X, потом по Y, потом снова по X и так далее.
+</div>
+
+<script>
+(() => {
+  const nSlider = document.getElementById('nSlider');
+  const kSlider = document.getElementById('kSlider');
+  const nVal = document.getElementById('nVal');
+  const kVal = document.getElementById('kVal');
+  const buildBtn = document.getElementById('buildBtn');
+  const stepBtn = document.getElementById('stepBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const infoBox = document.getElementById('infoBox');
+
+  const spaceCanvas = document.getElementById('spaceCanvas');
+  const treeCanvas = document.getElementById('treeCanvas');
+  const sctx = spaceCanvas.getContext('2d');
+  const tctx = treeCanvas.getContext('2d');
+
+  function fit(c) {
+    const dpr = window.devicePixelRatio || 1;
+    const r = c.getBoundingClientRect();
+    c.width = r.width * dpr;
+    c.height = r.height * dpr;
+    c.getContext('2d').setTransform(dpr,0,0,dpr,0,0);
+    return { w: r.width, h: r.height };
+  }
+
+  let points = [];
+  let root = null;
+  let splitOrder = [];   // список узлов в порядке их создания (для пошагового построения)
+  let shownSplits = 0;   // сколько разделителей уже показано
+  let searchState = null; // состояние поиска соседей
+
+  // ---- Генерация точек ----
+  function genPoints(n, w, h) {
+    const pts = [];
+    const pad = 20;
+    for (let i = 0; i < n; i++) {
+      pts.push({
+        x: pad + Math.random() * (w - 2*pad),
+        y: pad + Math.random() * (h - 2*pad),
+        idx: i
+      });
+    }
+    return pts;
+  }
+
+  // ---- Построение KD-дерева ----
+  // Сохраняем в каждом узле bbox области, которую он покрывает.
+  function buildKD(pts, depth, minX, minY, maxX, maxY) {
+    if (pts.length === 0) return null;
+    const axis = depth % 2;
+    pts.sort((a,b) => axis===0 ? a.x-b.x : a.y-b.y);
+    const mid = pts.length >> 1;
+    const node = {
+      point: pts[mid],
+      axis,
+      depth,
+      minX, minY, maxX, maxY,
+      left: null,
+      right: null
+    };
+    node.left = buildKD(pts.slice(0, mid), depth+1,
+      minX, minY,
+      axis===0 ? pts[mid].x : maxX,
+      axis===1 ? pts[mid].y : maxY);
+    node.right = buildKD(pts.slice(mid+1), depth+1,
+      axis===0 ? pts[mid].x : minX,
+      axis===1 ? pts[mid].y : minY,
+      maxX, maxY);
+    return node;
+  }
+
+  // Обход в ширину — чтобы получить порядок "построения" (сверху вниз, слева направо)
+  function bfsOrder(root) {
+    const out = [];
+    const q = [root];
+    while (q.length) {
+      const n = q.shift();
+      if (!n) continue;
+      out.push(n);
+      q.push(n.left);
+      q.push(n.right);
+    }
+    return out;
+  }
+
+  // ---- Отрисовка пространства ----
+  function drawSpace() {
+    const { w, h } = fit(spaceCanvas);
+    sctx.clearRect(0,0,w,h);
+
+    // Рисуем активные разделители
+    function drawNode(node, visible) {
+      if (!node || !visible) return;
+      const color = node.axis === 0 ? '#58a6ff' : '#bc8cff';
+      sctx.strokeStyle = color;
+      sctx.lineWidth = 1.2;
+      sctx.beginPath();
+      if (node.axis === 0) {
+        sctx.moveTo(node.point.x, node.minY);
+        sctx.lineTo(node.point.x, node.maxY);
+      } else {
+        sctx.moveTo(node.minX, node.point.y);
+        sctx.lineTo(node.maxX, node.point.y);
+      }
+      sctx.stroke();
+    }
+
+    // Рисуем только те узлы, что уже "построены"
+    for (let i = 0; i < Math.min(shownSplits, splitOrder.length); i++) {
+      drawNode(splitOrder[i], true);
+    }
+
+    // Подсветка при поиске
+    if (searchState) {
+      // отсечённые области
+      for (const n of searchState.pruned) {
+        sctx.fillStyle = 'rgba(248,81,73,0.12)';
+        sctx.fillRect(n.minX, n.minY, n.maxX-n.minX, n.maxY-n.minY);
+        sctx.strokeStyle = 'rgba(248,81,73,0.6)';
+        sctx.lineWidth = 1.5;
+        sctx.strokeRect(n.minX, n.minY, n.maxX-n.minX, n.maxY-n.minY);
+      }
+      // активный узел
+      if (searchState.current) {
+        const n = searchState.current;
+        sctx.fillStyle = 'rgba(240,136,62,0.15)';
+        sctx.fillRect(n.minX, n.minY, n.maxX-n.minX, n.maxY-n.minY);
+        sctx.strokeStyle = '#f0883e';
+        sctx.lineWidth = 2;
+        sctx.strokeRect(n.minX, n.minY, n.maxX-n.minX, n.maxY-n.minY);
+      }
+      // ромб L1 радиуса лучшего кандидата
+      if (searchState.bestDist < Infinity) {
+        const q = searchState.query;
+        const r = searchState.bestDist;
+        sctx.strokeStyle = 'rgba(63,185,80,0.5)';
+        sctx.setLineDash([4,3]);
+        sctx.lineWidth = 1.2;
+        sctx.beginPath();
+        sctx.moveTo(q.x, q.y - r);
+        sctx.lineTo(q.x + r, q.y);
+        sctx.lineTo(q.x, q.y + r);
+        sctx.lineTo(q.x - r, q.y);
+        sctx.closePath();
+        sctx.stroke();
+        sctx.setLineDash([]);
+      }
+      // линии к соседям
+      sctx.strokeStyle = '#3fb950';
+      sctx.lineWidth = 1.5;
+      sctx.beginPath();
+      for (const n of searchState.neighbors) {
+        sctx.moveTo(searchState.query.x, searchState.query.y);
+        sctx.lineTo(n.x, n.y);
+      }
+      sctx.stroke();
+    }
+
+    // Точки
+    for (const p of points) {
+      const isQuery = searchState && searchState.query.idx === p.idx;
+      const isNeigh = searchState && searchState.neighbors.some(n => n.idx === p.idx);
+      sctx.beginPath();
+      sctx.arc(p.x, p.y, isQuery ? 5 : 3, 0, Math.PI*2);
+      if (isQuery) sctx.fillStyle = '#f0883e';
+      else if (isNeigh) sctx.fillStyle = '#3fb950';
+      else sctx.fillStyle = '#e6edf3';
+      sctx.fill();
+    }
+  }
+
+  // ---- Отрисовка дерева как графа ----
+  function drawTree() {
+    const { w, h } = fit(treeCanvas);
+    tctx.clearRect(0,0,w,h);
+    if (!root) {
+      tctx.fillStyle = '#8b949e';
+      tctx.font = '13px sans-serif';
+      tctx.textAlign = 'center';
+      tctx.fillText('Дерево ещё не построено', w/2, h/2);
+      return;
+    }
+
+    // Считаем количество листьев в каждом поддереве для размещения
+    function countLeaves(n) {
+      if (!n) return 0;
+      if (!n.left && !n.right) return 1;
+      return countLeaves(n.left) + countLeaves(n.right);
+    }
+    const totalLeaves = countLeaves(root);
+    const depth = (function d(n){ return n ? 1 + Math.max(d(n.left), d(n.right)) : 0; })(root);
+
+    const padX = 20, padY = 24;
+    const plotW = w - 2*padX;
+    const plotH = h - 2*padY;
+    const levelH = plotH / Math.max(1, depth);
+
+    // Рекурсивное размещение: каждому узлу — горизонтальный центр,
+    // пропорциональный середине его области среди листьев.
+    let leafCursor = 0;
+    function layout(node) {
+      if (!node) return null;
+      if (!node.left && !node.right) {
+        const x = padX + (leafCursor + 0.5) * (plotW / totalLeaves);
+        leafCursor++;
+        return { node, x, y: padY + node.depth * levelH };
+      }
+      const left = layout(node.left);
+      const right = layout(node.right);
+      const xs = [left?.x, right?.x].filter(v => v !== undefined);
+      const x = xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : padX + plotW/2;
+      return { node, x, y: padY + node.depth * levelH, left, right };
+    }
+    const layoutRoot = layout(root);
+
+    // Рисуем рёбра
+    function drawEdges(L) {
+      if (!L) return;
+      if (L.left) {
+        tctx.strokeStyle = '#30363d';
+        tctx.lineWidth = 1;
+        tctx.beginPath();
+        tctx.moveTo(L.x, L.y);
+        tctx.lineTo(L.left.x, L.left.y);
+        tctx.stroke();
+        drawEdges(L.left);
+      }
+      if (L.right) {
+        tctx.strokeStyle = '#30363d';
+        tctx.beginPath();
+        tctx.moveTo(L.x, L.y);
+        tctx.lineTo(L.right.x, L.right.y);
+        tctx.stroke();
+        drawEdges(L.right);
+      }
+    }
+    drawEdges(layoutRoot);
+
+    // Рисуем узлы
+    function drawNodes(L) {
+      if (!L) return;
+      const n = L.node;
+      const visible = splitOrder.indexOf(n) < shownSplits;
+      const isActive = searchState && searchState.current === n;
+      const isPruned = searchState && searchState.pruned.includes(n);
+      const isInPath = searchState && searchState.visited.has(n);
+
+      tctx.beginPath();
+      tctx.arc(L.x, L.y, 6, 0, Math.PI*2);
+      if (!visible) {
+        tctx.fillStyle = '#21262d';
+        tctx.strokeStyle = '#30363d';
+      } else if (isActive) {
+        tctx.fillStyle = '#f0883e';
+        tctx.strokeStyle = '#f0883e';
+      } else if (isPruned) {
+        tctx.fillStyle = '#6e1b1b';
+        tctx.strokeStyle = '#f85149';
+      } else if (isInPath) {
+        tctx.fillStyle = '#1f6feb';
+        tctx.strokeStyle = '#58a6ff';
+      } else {
+        tctx.fillStyle = n.axis === 0 ? '#1f3d5c' : '#3d1f5c';
+        tctx.strokeStyle = n.axis === 0 ? '#58a6ff' : '#bc8cff';
+      }
+      tctx.lineWidth = 1.5;
+      tctx.fill();
+      tctx.stroke();
+
+      // Подпись индекса точки
+      if (visible) {
+        tctx.fillStyle = '#8b949e';
+        tctx.font = '9px sans-serif';
+        tctx.textAlign = 'center';
+        tctx.fillText('#' + n.point.idx, L.x, L.y + 18);
+      }
+
+      drawNodes(L.left);
+      drawNodes(L.right);
+    }
+    drawNodes(layoutRoot);
+
+    // Подписи уровней
+    tctx.fillStyle = '#484f58';
+    tctx.font = '10px sans-serif';
+    tctx.textAlign = 'left';
+    for (let d = 0; d < depth; d++) {
+      const y = padY + d * levelH;
+      tctx.fillText('depth=' + d + ', ' + (d%2===0 ? 'axis=X' : 'axis=Y'), 4, y + 3);
+    }
+  }
+
+  // ---- Поиск k ближайших соседей с анимацией ----
+  function L1(a, b) {
+    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  }
+
+  // Минимальное L1-расстояние от точки до прямоугольника
+  function minDistToRect(p, node) {
+    const dx = Math.max(node.minX - p.x, 0, p.x - node.maxX);
+    const dy = Math.max(node.minY - p.y, 0, p.y - node.maxY);
+    return dx + dy;
+  }
+
+  function startSearch(queryIdx) {
+    const k = parseInt(kSlider.value, 10);
+    const q = points[queryIdx];
+    searchState = {
+      query: q,
+      k,
+      bestDist: Infinity,
+      neighbors: [],
+      current: root,
+      stack: [],       // стек обхода
+      visited: new Set(),
+      pruned: [],
+      done: false
+    };
+    // Инициализируем стек: начнём с корня
+    if (root) searchState.stack = [root];
+    updateInfo('search-start', q, k);
+    animateSearch();
+  }
+
+  function animateSearch() {
+    if (!searchState || searchState.done) return;
+    const s = searchState;
+
+    // Один шаг обхода
+    if (s.stack.length === 0) {
+      s.done = true;
+      updateInfo('search-done', s.query, s.k, s.neighbors);
+      drawSpace();
+      drawTree();
+      return;
+    }
+
+    const node = s.stack.pop();
+    s.visited.add(node);
+    s.current = node;
+
+    const d = L1(s.query, node.point);
+    // Обновляем k лучших (простая вставка с сортировкой)
+    if (d < s.bestDist || s.neighbors.length < s.k) {
+      if (node.point.idx !== s.query.idx) {
+        s.neighbors.push({ ...node.point, d });
+        s.neighbors.sort((a,b) => a.d - b.d);
+        if (s.neighbors.length > s.k) s.neighbors.pop();
+        s.bestDist = s.neighbors[s.neighbors.length - 1].d;
+      }
+    }
+
+    // Решаем, в какие дети спускаться
+    const children = [node.left, node.right].filter(Boolean);
+    // Сортируем: сначала та сторона, где лежит запрос
+    children.sort((a,b) => minDistToRect(s.query, a) - minDistToRect(s.query, b));
+    for (const child of children) {
+      const md = minDistToRect(s.query, child);
+      if (md > s.bestDist && s.neighbors.length >= s.k) {
+        // Отсекаем — вся область дальше, чем наш текущий k-й сосед
+        s.pruned.push(child);
+      } else {
+        s.stack.push(child);
+      }
+    }
+
+    updateInfo('search-step', s.query, s.k, s.neighbors, node, s.pruned.length);
+    drawSpace();
+    drawTree();
+
+    setTimeout(animateSearch, 350);
+  }
+
+  function updateInfo(mode, q, k, neigh, node, prunedCount) {
+    if (mode === 'search-start') {
+      infoBox.innerHTML = `🔎 Ищем <b>${k}</b> ближайших соседей точки <b>#${q.idx}</b> (x=${q.x.toFixed(0)}, y=${q.y.toFixed(0)}). Обходим дерево сверху вниз, отбрасывая заведомо далёкие области.`;
+    } else if (mode === 'search-step') {
+      const inNeigh = neigh.some(n => n.idx === node.point.idx);
+      infoBox.innerHTML = `
+        <span class="step">Шаг:</span> узел <b>#${node.point.idx}</b>, расстояние до запроса = <b>${L1(q, node.point).toFixed(0)}</b>.
+        ${inNeigh ? '✓ Вошёл в топ-' + k + '.' : ''}
+        Текущий радиус поиска (L1): <b>${searchState.bestDist === Infinity ? '∞' : searchState.bestDist.toFixed(0)}</b>.
+        Отсечено областей: <b>${prunedCount}</b>.
+      `;
+    } else if (mode === 'search-done') {
+      const list = neigh.map(n => `#${n.idx} (d=${n.d.toFixed(0)})`).join(', ');
+      infoBox.innerHTML = `✅ Готово. Соседи точки <b>#${q.idx}</b>: ${list}. Красным подсвечены области, которые дерево даже не стало обходить — они заведомо дальше.`;
+    }
+  }
+
+  // ---- Пошаговое построение ----
+  function buildStep() {
+    if (!root) {
+      // Строим всё дерево сразу, но показываем по одному узлу
+      const { w, h } = fit(spaceCanvas);
+      points = genPoints(parseInt(nSlider.value, 10), w, h);
+      const indexed = points.map(p => ({...p}));
+      root = buildKD(indexed, 0, 0, 0, w, h);
+      splitOrder = bfsOrder(root);
+      shownSplits = 0;
+    }
+    if (shownSplits < splitOrder.length) {
+      shownSplits++;
+      const n = splitOrder[shownSplits - 1];
+      infoBox.innerHTML = `
+        <span class="step">Шаг ${shownSplits}/${splitOrder.length}:</span>
+        точка <b>#${n.point.idx}</b> делит область по оси <b>${n.axis===0 ? 'X' : 'Y'}</b>
+        (глубина ${n.depth}). Слева — точки с меньшей координатой, справа — с большей.
+      `;
+      drawSpace();
+      drawTree();
+    } else {
+      infoBox.innerHTML = `✅ Дерево построено. Всего узлов: <b>${splitOrder.length}</b>. Кликни по точке, чтобы увидеть поиск.`;
+    }
+  }
+
+  function buildAll() {
+    if (!root) {
+      const { w, h } = fit(spaceCanvas);
+      points = genPoints(parseInt(nSlider.value, 10), w, h);
+      const indexed = points.map(p => ({...p}));
+      root = buildKD(indexed, 0, 0, 0, w, h);
+      splitOrder = bfsOrder(root);
+      shownSplits = 0;
+    }
+    // Анимируем быстрое построение
+    const iv = setInterval(() => {
+      if (shownSplits >= splitOrder.length) {
+        clearInterval(iv);
+        infoBox.innerHTML = `✅ Дерево построено. Всего узлов: <b>${splitOrder.length}</b>. Кликни по точке, чтобы увидеть поиск.`;
+        return;
+      }
+      shownSplits++;
+      drawSpace();
+      drawTree();
+    }, 80);
+  }
+
+  function reset() {
+    root = null;
+    splitOrder = [];
+    shownSplits = 0;
+    searchState = null;
+    const { w, h } = fit(spaceCanvas);
+    points = genPoints(parseInt(nSlider.value, 10), w, h);
+    infoBox.innerHTML = 'Нажми <b>«Построить дерево»</b>, чтобы увидеть пошаговое построение.';
+    drawSpace();
+    drawTree();
+  }
+
+  // ---- События ----
+  nSlider.addEventListener('input', () => {
+    nVal.textContent = nSlider.value;
+    reset();
+  });
+  kSlider.addEventListener('input', () => {
+    kVal.textContent = kSlider.value;
+  });
+  buildBtn.addEventListener('click', buildAll);
+  stepBtn.addEventListener('click', buildStep);
+  resetBtn.addEventListener('click', reset);
+
+  spaceCanvas.addEventListener('click', (e) => {
+    const rect = spaceCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    // Ищем ближайшую точку
+    let best = -1, bestD = 20;
+    for (const p of points) {
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d < bestD) { bestD = d; best = p.idx; }
+    }
+    if (best >= 0 && root && shownSplits === splitOrder.length) {
+      startSearch(best);
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    drawSpace();
+    drawTree();
+  });
+
+  reset();
+})();
+</script>
+
+</body>
+</html>

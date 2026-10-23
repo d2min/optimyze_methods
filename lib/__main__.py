@@ -1,5 +1,6 @@
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from data.xyz_loader import XYZLoader
@@ -20,17 +21,14 @@ def clear_directory(directory: Path) -> None:
 
 
 def findTarget(len: int) -> int:
-    if len > 10_000_000:
-        return len // 10
-    
     if len > 5_000_000:
-        return len // 5
+        return 2_000_000
 
     if len > 3_000_000:
-        return len // 3
+        return 1_000_000
 
     if len > 500_000:
-        return len // 2
+        return 200_000
 
     if len > 100_000:
         return len - 1
@@ -67,6 +65,7 @@ def main() -> int:
         return 1
 
     failures = 0
+    loop_started_at = time.perf_counter()
     for filepath in files:
         try:
             print(f"\n------------------- Обработка {filepath.name} ---------------------")
@@ -86,25 +85,31 @@ def main() -> int:
             result_points = result_points[result_clean.keep]
             result_classes = result_classes[result_clean.keep]
 
+            print(f'Общее число точек после обработки {len(result_points)}')
+
             # Получение ближайших точек
             folks_result, folks_classes = k_folks(
                 points=result_points, k=400, classes=result_classes
             )
 
             # Z-score
-            folks_result = zscore.fit_transform_k_folks(folks_result)
-            print(f"Z-score для folks точек прошла")
+            # ! Пока отключили но не удаляем
+            # folks_result = zscore.fit_transform_k_folks(folks_result)
+            # print(f"Z-score для folks точек прошла")
 
-            result_points = zscore.fit_transform(result_points)
-            print(f"Z-score для облока точек прошла")
+            # result_points = zscore.fit_transform(result_points)
+            # print(f"Z-score для облока точек прошла")
+            # !
 
-            output_path = export_dir / f"{filepath.stem}.csv"
-            export_points_to_npy(
-                points=result_points,
-                filepath=output_path,
-                classes=result_classes,
-            )
-            print(f"Успешный импорт облока")
+            # ! Отключил но не удалять
+            # output_path = export_dir / f"{filepath.stem}.csv"
+            # export_points_to_npy(
+            #     points=result_points,
+            #     filepath=output_path,
+            #     classes=result_classes,
+            # )
+            # print(f"Успешный импорт облока")
+            # !
 
             output_path = export_dir / f"{filepath.stem}_k_folks.csv"
             export_k_folks_to_npy(
@@ -119,6 +124,12 @@ def main() -> int:
         except Exception as error:
             failures += 1
             print(f"❌ Ошибка при обработке {filepath.name}: {error}")
+
+    elapsed_seconds = int(time.perf_counter() - loop_started_at)
+    print(
+        f"Общее время обработки: "
+        f"{elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
+    )
 
     return 1 if failures else 0
 

@@ -36,6 +36,18 @@ def test_result_does_not_exceed_target():
     assert len(result) <= 20
 
 
+def test_voxel_size_is_refined_when_outliers_expand_bounding_box():
+    rng = np.random.default_rng(3)
+    points = np.vstack((
+        rng.uniform(0, 1, size=(4900, 3)),
+        [[100.0, 100.0, 100.0], [0.0, 0.0, 0.0]],
+    ))
+
+    result = downsample_point_cloud(points, target_points=1000)
+
+    assert 800 <= len(result) <= 1000
+
+
 def test_negative_target_is_rejected():
     points = np.ones((10, 3))
 
