@@ -1,4 +1,4 @@
-"""Экспорт массивов облака точек и k_folks в CSV."""
+"""Экспорт массивов облака точек и k_folks в CSV и NPY."""
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +21,12 @@ def _write_csv(data: np.ndarray, filepath: str | Path, columns: list[str],
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savetxt(path, data, delimiter=",", fmt=fmt,
                header=",".join(columns), comments="")
+
+
+def _write_npy(data: np.ndarray, filepath: str | Path) -> None:
+    path = Path(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(path, data)
 
 
 def export_points_to_csv(points: np.ndarray, filepath: str | Path,
@@ -47,6 +53,28 @@ def export_points_to_csv(points: np.ndarray, filepath: str | Path,
         data, filepath, ["class", "x", "y", "z"],
         fmt=["%d", "%.10f", "%.10f", "%.10f"],
     )
+
+
+def export_points_to_npy(points: np.ndarray, filepath: str | Path,
+                         classes: np.ndarray = None) -> None:
+    """Экспортировать облако точек формы (N, 3) в NPY."""
+    matrix = _validate_numeric_matrix(points, "points")
+    if matrix.shape[1] != 3:
+        raise ValueError(f"points должен иметь форму (N, 3), получена форма {matrix.shape}")
+    if classes is None:
+        _write_npy(matrix, filepath)
+        return
+
+    labels = np.asarray(classes)
+    if labels.ndim != 1 or len(labels) != len(matrix):
+        raise ValueError(
+            f"classes должен иметь форму ({len(matrix)},), получена форма {labels.shape}"
+        )
+    if not np.issubdtype(labels.dtype, np.number):
+        raise TypeError("classes должен содержать числовые метки")
+    if not np.isfinite(labels).all():
+        raise ValueError("classes не должен содержать NaN или inf")
+    _write_npy(np.column_stack((labels, matrix)), filepath)
 
 
 def export_k_folks_to_csv(neighbors: np.ndarray, filepath: str | Path,
@@ -100,3 +128,34 @@ def export_k_folks_to_csv(neighbors: np.ndarray, filepath: str | Path,
         ])
         fmt.extend(["%.10f", "%.10f", "%.10f", "%d"])
     _write_csv(data, filepath, labeled_columns, fmt=fmt)
+
+
+def export_k_folks_to_npy(neighbors: np.ndarray, filepath: str | Path,
+                          classes: np.ndarray = None) -> None:
+    """Экспортировать матрицу k_folks формы (N, 3 * (k + 1)) в NPY."""
+    matrix = _validate_numeric_matrix(neighbors, "neighbors")
+    if matrix.shape[1] == 0 or matrix.shape[1] % 3 != 0:
+        raise ValueError(
+            "neighbors должен иметь форму (N, 3 * (k + 1)), "
+            f"получена форма {matrix.shape}"
+        )
+    if classes is None:
+        _write_npy(matrix, filepath)
+        return
+
+    labels = np.asarray(classes)
+    expected_shape = (len(matrix), matrix.shape[1] // 3)
+    if labels.shape != expected_shape:
+        raise ValueError(
+            f"classes должен иметь форму {expected_shape}, получена форма {labels.shape}"
+        )
+    if not np.issubdtype(labels.dtype, np.number):
+        raise TypeError("classes должен содержать числовые метки")
+    if not np.isfinite(labels).all():
+        raise ValueError("classes не должен содержать NaN или inf")
+
+    coordinate_groups = matrix.reshape(len(matrix), -1, 3)
+    data = np.concatenate((coordinate_groups, labels[..., None]), axis=2).reshape(
+        len(matrix), -1
+    )
+    _write_npy(data, filepath)

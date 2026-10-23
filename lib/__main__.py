@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from data.xyz_loader import XYZLoader
-from data.xyz_export import export_k_folks_to_csv, export_points_to_csv
+from data.xyz_export import export_k_folks_to_csv, export_points_to_csv, export_k_folks_to_npy, export_points_to_npy
 from optimization.k_folks import k_folks
 from optimization.normalization.zscore import ZScoreScaler
 from optimization.downsampling.voxel import downsample_point_cloud
@@ -99,7 +99,7 @@ def main() -> int:
             print(f"Z-score для облока точек прошла")
 
             output_path = export_dir / f"{filepath.stem}.csv"
-            export_points_to_csv(
+            export_points_to_npy(
                 points=result_points,
                 filepath=output_path,
                 classes=result_classes,
@@ -107,7 +107,7 @@ def main() -> int:
             print(f"Успешный импорт облока")
 
             output_path = export_dir / f"{filepath.stem}_k_folks.csv"
-            export_k_folks_to_csv(
+            export_k_folks_to_npy(
                 neighbors=folks_result,
                 filepath=output_path,
                 classes=folks_classes,

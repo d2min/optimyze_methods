@@ -6,7 +6,12 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lib.data.xyz_export import export_k_folks_to_csv, export_points_to_csv  # noqa: E402
+from lib.data.xyz_export import (  # noqa: E402
+    export_k_folks_to_csv,
+    export_k_folks_to_npy,
+    export_points_to_csv,
+    export_points_to_npy,
+)
 from lib.optimization.k_folks.k_folks import k_folks  # noqa: E402
 
 
@@ -38,6 +43,19 @@ def test_export_points_csv_includes_each_class():
         np.testing.assert_allclose(data[:, 1:], points)
 
 
+def test_export_points_npy_saves_points_and_classes():
+    points = np.array([[1.25, 2.5, 3.75], [4.0, 5.0, 6.0]])
+    classes = np.array([2, 6], dtype=np.int32)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        filepath = Path(temp_dir) / "nested" / "points.npy"
+
+        export_points_to_npy(points, filepath, classes=classes)
+
+        data = np.load(filepath)
+        np.testing.assert_array_equal(data[:, 0], classes)
+        np.testing.assert_array_equal(data[:, 1:], points)
+
+
 def test_export_k_folks_csv_has_target_and_neighbor_columns():
     neighbors = np.array([[0, 1, 2, 3, 4, 5, 6, 7, 8]], dtype=np.float32)
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -52,6 +70,18 @@ def test_export_k_folks_csv_has_target_and_neighbor_columns():
             "neighbor_2_x,neighbor_2_y,neighbor_2_z"
         )
         np.testing.assert_allclose(np.loadtxt(filepath, delimiter=",", skiprows=1), neighbors[0])
+
+
+def test_export_k_folks_npy_saves_neighbors_and_classes():
+    neighbors = np.array([[0, 1, 2, 3, 4, 5]], dtype=np.float32)
+    classes = np.array([[6, 9]], dtype=np.int32)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        filepath = Path(temp_dir) / "nested" / "neighbors.npy"
+
+        export_k_folks_to_npy(neighbors, filepath, classes=classes)
+
+        data = np.load(filepath)
+        np.testing.assert_array_equal(data, [[0, 1, 2, 6, 3, 4, 5, 9]])
 
 
 def test_export_k_folks_csv_includes_class_for_target_and_neighbors():
@@ -95,6 +125,8 @@ def test_exporters_reject_wrong_shapes():
     for exporter, matrix in (
         (export_points_to_csv, np.zeros((2, 6))),
         (export_k_folks_to_csv, np.zeros((2, 4))),
+        (export_points_to_npy, np.zeros((2, 6))),
+        (export_k_folks_to_npy, np.zeros((2, 4))),
     ):
         try:
             exporter(matrix, "unused.csv")
