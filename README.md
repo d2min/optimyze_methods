@@ -39,5 +39,9 @@ a x y z
       <td><code>Нахождение ближайших m</code></td>
       <td>Нахождение ближайших m точек к каждой точке облока в отсортированном порядке</td>
     </tr>
+    <tr>
+      <td><code>Признаки: HAG, нормаль, земля</code></td>
+      <td>Высота над землёй (земля — класс 2 или CSF), нормаль nx ny nz с nz ≥ 0, флаг земли. В экспорте k_folks группа на точку: x y z hag nx ny nz ground class. <a href="lib/optimization/features/README.md">Подробнее</a></td>
+    </tr>
   </tbody>
 </table>

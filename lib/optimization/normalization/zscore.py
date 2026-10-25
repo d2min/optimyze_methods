@@ -25,10 +25,14 @@ class ZScoreScaler:
         mean_      — (3,) среднее по каждой оси, float64
         std_       — (3,) стандартное отклонение по каждой оси, float64
         n_samples_ — число точек, по которым считались параметры
+
+    n_columns — сколько столбцов стандартизуется: 3 (x y z, по умолчанию) или,
+    например, 1 для отдельного признака вроде HAG: ZScoreScaler(n_columns=1).
     """
 
-    def __init__(self, eps: float = 1e-12):
+    def __init__(self, eps: float = 1e-12, n_columns: int = 3):
         self.eps = eps
+        self.n_columns = int(n_columns)
         self.mean_: Optional[np.ndarray] = None
         self.std_: Optional[np.ndarray] = None
         self.n_samples_: Optional[int] = None
@@ -108,9 +112,10 @@ class ZScoreScaler:
 
     def _check(self, points: np.ndarray, where: str) -> np.ndarray:
         p = np.asarray(points)
-        if p.ndim != 2 or p.shape[1] != 3:
-            hint = " Столбец класса передавать не нужно — только x y z." if p.ndim == 2 and p.shape[1] == 4 else ""
-            raise ValueError(f"{where}: ожидается матрица (N, 3), получено {p.shape}.{hint}")
+        if p.ndim != 2 or p.shape[1] != self.n_columns:
+            hint = (" Столбец класса передавать не нужно — только x y z."
+                    if self.n_columns == 3 and p.ndim == 2 and p.shape[1] == 4 else "")
+            raise ValueError(f"{where}: ожидается матрица (N, {self.n_columns}), получено {p.shape}.{hint}")
         if not np.isfinite(p).all():
             raise ValueError(f"{where}: в матрице есть NaN или inf")
         return p.astype(np.float64, copy=False)

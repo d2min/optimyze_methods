@@ -159,3 +159,73 @@ def export_k_folks_to_npy(neighbors: np.ndarray, filepath: str | Path,
         len(matrix), -1
     )
     _write_npy(data, filepath)
+
+
+def k_folks_feature_columns(k: int, feature_names, with_class: bool = True) -> list[str]:
+    """Названия столбцов экспорта k_folks с признаками.
+
+    Группа на каждую точку: x, y, z, затем признаки, затем class (если есть).
+    Порядок групп: target, neighbor_1, ..., neighbor_k.
+    """
+    names = []
+    for prefix in ["target"] + [f"neighbor_{i}" for i in range(1, k + 1)]:
+        names += [f"{prefix}_{c}" for c in ("x", "y", "z", *feature_names)]
+        if with_class:
+            names.append(f"{prefix}_class")
+    return names
+
+
+def _k_folks_feature_matrix(neighbors: np.ndarray, features: np.ndarray,
+                            classes: np.ndarray = None) -> np.ndarray:
+    matrix = _validate_numeric_matrix(neighbors, "neighbors")
+    if matrix.shape[1] == 0 or matrix.shape[1] % 3 != 0:
+        raise ValueError(
+            "neighbors должен иметь форму (N, 3 * (k + 1)), "
+            f"получена форма {matrix.shape}"
+        )
+    groups = matrix.shape[1] // 3
+    feats = np.asarray(features)
+    if feats.ndim != 3 or feats.shape[:2] != (len(matrix), groups):
+        raise ValueError(
+            f"features должен иметь форму ({len(matrix)}, {groups}, F), "
+            f"получена форма {feats.shape}"
+        )
+    if not np.issubdtype(feats.dtype, np.number) or not np.isfinite(feats).all():
+        raise ValueError("features должен содержать конечные числа")
+    dtype = np.result_type(matrix.dtype, feats.dtype, np.float32)
+    parts = [matrix.reshape(len(matrix), groups, 3).astype(dtype, copy=False),
+             feats.astype(dtype, copy=False)]
+    if classes is not None:
+        labels = np.asarray(classes)
+        if labels.shape != (len(matrix), groups):
+            raise ValueError(
+                f"classes должен иметь форму {(len(matrix), groups)}, получена форма {labels.shape}"
+            )
+        if not np.issubdtype(labels.dtype, np.number) or not np.isfinite(labels).all():
+            raise ValueError("classes должен содержать конечные числовые метки")
+        parts.append(labels[..., None].astype(dtype, copy=False))
+    return np.concatenate(parts, axis=2).reshape(len(matrix), -1)
+
+
+def export_k_folks_features_to_npy(neighbors: np.ndarray, features: np.ndarray,
+                                   filepath: str | Path,
+                                   classes: np.ndarray = None) -> None:
+    """Экспортировать k_folks вместе с признаками точек в NPY.
+
+    neighbors — (N, 3 * (k + 1)) из k_folks; features — (N, k + 1, F) из
+    k_folks(..., features=...); classes — (N, k + 1) или None.
+    Результат (N, (k + 1) * G), где группа G = x, y, z, признаки..., class.
+    Тип — float32 (float64, если координаты во float64).
+    """
+    _write_npy(_k_folks_feature_matrix(neighbors, features, classes), filepath)
+
+
+def export_k_folks_features_to_csv(neighbors: np.ndarray, features: np.ndarray,
+                                   filepath: str | Path, feature_names,
+                                   classes: np.ndarray = None) -> None:
+    """То же, что export_k_folks_features_to_npy, но в CSV с заголовком."""
+    data = _k_folks_feature_matrix(neighbors, features, classes)
+    k = neighbors.shape[1] // 3 - 1
+    columns = k_folks_feature_columns(k, feature_names, with_class=classes is not None)
+    per_group = ["%.10f"] * (3 + len(feature_names)) + (["%d"] if classes is not None else [])
+    _write_csv(data, filepath, columns, fmt=per_group * (k + 1))
