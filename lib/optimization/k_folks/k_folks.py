@@ -12,7 +12,8 @@ def k_folks(
     k: int,
     show_progress: bool = True,
     classes: Optional[np.ndarray] = None,
-) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    features: Optional[np.ndarray] = None,
+) -> Union[np.ndarray, Tuple[np.ndarray, ...]]:
     """Вернуть каждую точку вместе с k ближайшими соседями.
 
     Для каждой target-точки она считается началом координат. Радиус другой
@@ -26,6 +27,12 @@ def k_folks(
     худшая — O(N² + Nk).
 
     show_progress — отображать прогресс перебора в stderr.
+
+    features — необязательные признаки каждой точки формы (N, F), например
+    hag, nx, ny, nz, ground. Если переданы, для target-точки и каждого соседа
+    возвращается их строка признаков: массив (N, k + 1, F) в том же порядке,
+    что и координаты. Возвращается последним элементом кортежа:
+    (result, features) или (result, classes, features), если переданы и classes.
     """
     points = np.asarray(points)
     if points.ndim != 2 or points.shape[1] != 3:
@@ -40,6 +47,17 @@ def k_folks(
             raise ValueError(
                 f"classes должен иметь форму ({len(points)},), получена форма {classes.shape}"
             )
+
+    if features is not None:
+        features = np.asarray(features)
+        if features.ndim != 2 or len(features) != len(points):
+            raise ValueError(
+                f"features должен иметь форму ({len(points)}, F), получена форма {features.shape}"
+            )
+        if not np.issubdtype(features.dtype, np.number):
+            raise TypeError("features должен содержать числовые значения")
+        if not np.isfinite(features).all():
+            raise ValueError("features не должен содержать NaN или бесконечные значения")
 
     try:
         k = index(k)
@@ -61,11 +79,12 @@ def k_folks(
     if classes is not None:
         neighbor_classes = np.empty((n_points, k + 1), dtype=classes.dtype)
         neighbor_classes[:, 0] = classes
+    neighbor_features = None
+    if features is not None:
+        neighbor_features = np.empty((n_points, k + 1, features.shape[1]), dtype=features.dtype)
+        neighbor_features[:, 0, :] = features
     if k == 0 or n_points == 0:
-        result = neighbors.reshape(n_points, 3 * (k + 1))
-        if neighbor_classes is not None:
-            return result, neighbor_classes
-        return result
+        return _pack(neighbors.reshape(n_points, 3 * (k + 1)), neighbor_classes, neighbor_features)
 
     coordinates = points.astype(np.float64, copy=False)
     tree = cKDTree(coordinates)
@@ -88,6 +107,8 @@ def k_folks(
         neighbors[start:stop, 1:, :] = points[nearest]
         if neighbor_classes is not None:
             neighbor_classes[start:stop, 1:] = classes[nearest]
+        if neighbor_features is not None:
+            neighbor_features[start:stop, 1:, :] = features[nearest]
 
         completed = stop
         if show_progress and (completed >= next_progress or completed == n_points):
@@ -100,7 +121,14 @@ def k_folks(
     if show_progress:
         print(file=sys.stderr)
 
-    result = neighbors.reshape(n_points, 3 * (k + 1))
+    return _pack(neighbors.reshape(n_points, 3 * (k + 1)), neighbor_classes, neighbor_features)
+
+
+def _pack(result, neighbor_classes, neighbor_features):
+    """Форма возврата как раньше: result или (result, classes); features — последним."""
+    out = (result,)
     if neighbor_classes is not None:
-        return result, neighbor_classes
-    return result
+        out += (neighbor_classes,)
+    if neighbor_features is not None:
+        out += (neighbor_features,)
+    return out[0] if len(out) == 1 else out

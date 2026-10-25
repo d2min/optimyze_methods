@@ -7,10 +7,12 @@ from typing import Iterator
 
 from data.xyz_loader import XYZLoader
 from data.xyz_export import export_k_folks_to_csv, export_points_to_csv, export_k_folks_to_npy, export_points_to_npy
+from data.xyz_export import export_k_folks_features_to_npy
 from optimization.k_folks import k_folks
 from optimization.normalization.zscore import ZScoreScaler
 from optimization.downsampling.voxel import downsample_point_cloud
 from optimization.filtering import clean
+from optimization.features import compute_features
 
 
 @contextmanager
@@ -102,15 +104,25 @@ def main() -> int:
 
             print(f'Общее число точек после обработки {len(result_points)}')
 
+            # Признаки: hag, nx, ny, nz, ground (земля — класс 2, если есть, иначе CSF)
+            with measure_time("compute_features"):
+                point_features = compute_features(result_points, result_classes)
+            print(f"Земля для HAG взята из: {point_features.ground_source}")
+
             # Получение ближайших точек
             with measure_time("k_folks"):
-                folks_result, folks_classes = k_folks(
-                    points=result_points, k=400, classes=result_classes
+                folks_result, folks_classes, folks_features = k_folks(
+                    points=result_points, k=400, classes=result_classes,
+                    features=point_features.values,
                 )
 
             # Z-score
             # ! Пока отключили но не удаляем
             # folks_result = zscore.fit_transform_k_folks(folks_result)
+            # HAG стандартизуется отдельно, нормали и ground — нет:
+            # hag = folks_features[..., 0]
+            # folks_features[..., 0] = ZScoreScaler(n_columns=1).fit_transform(
+            #     hag.reshape(-1, 1)).reshape(hag.shape)
             # print(f"Z-score для folks точек прошла")
 
             # result_points = zscore.fit_transform(result_points)
@@ -128,9 +140,11 @@ def main() -> int:
             # !
 
             output_path = export_dir / f"{filepath.stem}_k_folks.csv"
-            with measure_time("export_k_folks_to_npy"):
-                export_k_folks_to_npy(
+            # Группа на каждую точку: x y z hag nx ny nz ground class
+            with measure_time("export_k_folks_features_to_npy"):
+                export_k_folks_features_to_npy(
                     neighbors=folks_result,
+                    features=folks_features,
                     filepath=output_path,
                     classes=folks_classes,
                 )
