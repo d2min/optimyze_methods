@@ -1,7 +1,9 @@
 import shutil
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from data.xyz_loader import XYZLoader
 from data.xyz_export import export_k_folks_to_csv, export_points_to_csv, export_k_folks_to_npy, export_points_to_npy
@@ -9,6 +11,16 @@ from optimization.k_folks import k_folks
 from optimization.normalization.zscore import ZScoreScaler
 from optimization.downsampling.voxel import downsample_point_cloud
 from optimization.filtering import clean
+
+
+@contextmanager
+def measure_time(label: str) -> Iterator[None]:
+    started_at = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed_seconds = time.perf_counter() - started_at
+        print(f"Время выполнения {label}: {elapsed_seconds:.3f} сек.")
 
 
 def clear_directory(directory: Path) -> None:
@@ -71,26 +83,30 @@ def main() -> int:
             print(f"\n------------------- Обработка {filepath.name} ---------------------")
 
             zscore = ZScoreScaler()
-            classes, points = XYZLoader(str(filepath)).load()
+            with measure_time("XYZLoader.load"):
+                classes, points = XYZLoader(str(filepath)).load()
             
             # Voxel downsampling
-            result_points, result_classes = downsample_point_cloud(
-                points=points,
-                target_points= findTarget(len=len(points)),
-                classes=classes,
-            )
+            with measure_time("downsample_point_cloud"):
+                result_points, result_classes = downsample_point_cloud(
+                    points=points,
+                    target_points=findTarget(len=len(points)),
+                    classes=classes,
+                )
 
             # Filtration
-            result_clean = clean(result_points, result_classes)
+            with measure_time("clean"):
+                result_clean = clean(result_points, result_classes)
             result_points = result_points[result_clean.keep]
             result_classes = result_classes[result_clean.keep]
 
             print(f'Общее число точек после обработки {len(result_points)}')
 
             # Получение ближайших точек
-            folks_result, folks_classes = k_folks(
-                points=result_points, k=400, classes=result_classes
-            )
+            with measure_time("k_folks"):
+                folks_result, folks_classes = k_folks(
+                    points=result_points, k=400, classes=result_classes
+                )
 
             # Z-score
             # ! Пока отключили но не удаляем
@@ -112,11 +128,13 @@ def main() -> int:
             # !
 
             output_path = export_dir / f"{filepath.stem}_k_folks.csv"
-            export_k_folks_to_npy(
-                neighbors=folks_result,
-                filepath=output_path,
-                classes=folks_classes,
-            )
+            with measure_time("export_k_folks_to_npy"):
+                export_k_folks_to_npy(
+                    neighbors=folks_result,
+                    filepath=output_path,
+                    classes=folks_classes,
+                )
+
             print(f"Успешный импорт folks точек")
 
             print(f"--------------------------------------------------------------")
