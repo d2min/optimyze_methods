@@ -32,57 +32,70 @@ def _compute_curvature_via_pca(points: np.ndarray, voxel_size: float) -> np.ndar
 
     # Подсчет точек в каждом вокселе
     counts = np.bincount(inverse_indices, minlength=num_voxels)
+    valid_indices = np.flatnonzero(counts >= 3)
+    curvature_voxel = np.zeros(num_voxels, dtype=np.float64)
+    if not len(valid_indices):
+        return curvature_voxel[inverse_indices]
+
+    compact_indices = np.full(num_voxels, -1, dtype=np.intp)
+    compact_indices[valid_indices] = np.arange(len(valid_indices))
+    valid_points_mask = counts[inverse_indices] >= 3
+    valid_inverse_indices = compact_indices[inverse_indices[valid_points_mask]]
+    valid_points = points[valid_points_mask]
+    valid_counts = counts[valid_indices]
 
     # Вычисляем суммы для ковариационной матрицы через np.bincount
     # C = E[XX^T] - E[X]E[X]^T
-    sum_x = np.bincount(inverse_indices, weights=points[:, 0], minlength=num_voxels)
-    sum_y = np.bincount(inverse_indices, weights=points[:, 1], minlength=num_voxels)
-    sum_z = np.bincount(inverse_indices, weights=points[:, 2], minlength=num_voxels)
+    sums = np.column_stack([
+        np.bincount(
+            valid_inverse_indices,
+            weights=values,
+            minlength=len(valid_indices),
+        )
+        for values in (
+            valid_points[:, 0],
+            valid_points[:, 1],
+            valid_points[:, 2],
+        )
+    ])
+    products = (
+        valid_points[:, 0] ** 2,
+        valid_points[:, 1] ** 2,
+        valid_points[:, 2] ** 2,
+        valid_points[:, 0] * valid_points[:, 1],
+        valid_points[:, 0] * valid_points[:, 2],
+        valid_points[:, 1] * valid_points[:, 2],
+    )
+    sum_xx, sum_yy, sum_zz, sum_xy, sum_xz, sum_yz = (
+        np.bincount(
+            valid_inverse_indices,
+            weights=values,
+            minlength=len(valid_indices),
+        )
+        for values in products
+    )
+    means = sums / valid_counts[:, None]
 
-    sum_xx = np.bincount(inverse_indices, weights=points[:, 0] ** 2, minlength=num_voxels)
-    sum_yy = np.bincount(inverse_indices, weights=points[:, 1] ** 2, minlength=num_voxels)
-    sum_zz = np.bincount(inverse_indices, weights=points[:, 2] ** 2, minlength=num_voxels)
+    cov = np.empty((len(valid_indices), 3, 3), dtype=np.float64)
+    cov[:, 0, 0] = sum_xx / valid_counts - means[:, 0] ** 2
+    cov[:, 1, 1] = sum_yy / valid_counts - means[:, 1] ** 2
+    cov[:, 2, 2] = sum_zz / valid_counts - means[:, 2] ** 2
+    cov[:, 0, 1] = cov[:, 1, 0] = (
+        sum_xy / valid_counts - means[:, 0] * means[:, 1]
+    )
+    cov[:, 0, 2] = cov[:, 2, 0] = (
+        sum_xz / valid_counts - means[:, 0] * means[:, 2]
+    )
+    cov[:, 1, 2] = cov[:, 2, 1] = (
+        sum_yz / valid_counts - means[:, 1] * means[:, 2]
+    )
 
-    sum_xy = np.bincount(inverse_indices, weights=points[:, 0] * points[:, 1], minlength=num_voxels)
-    sum_xz = np.bincount(inverse_indices, weights=points[:, 0] * points[:, 2], minlength=num_voxels)
-    sum_yz = np.bincount(inverse_indices, weights=points[:, 1] * points[:, 2], minlength=num_voxels)
-
-    # Защита от деления на ноль и вырожденных случаев
-    valid_mask = counts >= 3  # Минимум 3 точки для PCA
-
-    # Инициализируем ковариационные матрицы нулями
-    cov = np.zeros((num_voxels, 3, 3), dtype=np.float64)
-
-    # Вычисляем ковариацию только для валидных вокселей
-    if np.any(valid_mask):
-        mean_x = np.zeros(num_voxels, dtype=np.float64)
-        mean_y = np.zeros(num_voxels, dtype=np.float64)
-        mean_z = np.zeros(num_voxels, dtype=np.float64)
-
-        mean_x[valid_mask] = sum_x[valid_mask] / counts[valid_mask]
-        mean_y[valid_mask] = sum_y[valid_mask] / counts[valid_mask]
-        mean_z[valid_mask] = sum_z[valid_mask] / counts[valid_mask]
-
-        cov[valid_mask, 0, 0] = (sum_xx[valid_mask] / counts[valid_mask]) - mean_x[valid_mask] ** 2
-        cov[valid_mask, 1, 1] = (sum_yy[valid_mask] / counts[valid_mask]) - mean_y[valid_mask] ** 2
-        cov[valid_mask, 2, 2] = (sum_zz[valid_mask] / counts[valid_mask]) - mean_z[valid_mask] ** 2
-        cov[valid_mask, 0, 1] = (sum_xy[valid_mask] / counts[valid_mask]) - mean_x[valid_mask] * mean_y[valid_mask]
-        cov[valid_mask, 1, 0] = cov[valid_mask, 0, 1]
-        cov[valid_mask, 0, 2] = (sum_xz[valid_mask] / counts[valid_mask]) - mean_x[valid_mask] * mean_z[valid_mask]
-        cov[valid_mask, 2, 0] = cov[valid_mask, 0, 2]
-        cov[valid_mask, 1, 2] = (sum_yz[valid_mask] / counts[valid_mask]) - mean_y[valid_mask] * mean_z[valid_mask]
-        cov[valid_mask, 2, 1] = cov[valid_mask, 1, 2]
-
-    # Вычисляем собственные значения (batch-операция)
-    # np.linalg.eigvalsh возвращает в ВОЗРАСТАЮЩЕМ порядке: λ1 ≤ λ2 ≤ λ3
-    eigenvalues = np.linalg.eigvalsh(cov)
-    eigenvalues = np.maximum(eigenvalues, 0)  # Обнуляем отрицательные значения (численные ошибки)
-
-    # Кривизна (Surface Variation) = λ_min / (λ1 + λ2 + λ3)
+    eigenvalues = np.maximum(np.linalg.eigvalsh(cov), 0)
     lambda_sum = np.sum(eigenvalues, axis=1)
-    curvature_voxel = np.zeros(num_voxels, dtype=np.float64)
     valid_lambda = lambda_sum > 1e-10
-    curvature_voxel[valid_lambda] = eigenvalues[valid_lambda, 0] / lambda_sum[valid_lambda]
+    curvature_voxel[valid_indices[valid_lambda]] = (
+        eigenvalues[valid_lambda, 0] / lambda_sum[valid_lambda]
+    )
 
     # Присваиваем кривизну вокселя всем точкам внутри него
     curvature = curvature_voxel[inverse_indices]
@@ -126,17 +139,39 @@ def _process_voxel_grid(points: np.ndarray, voxel_size: float, p_min: np.ndarray
         ) / counts
 
     if classes is not None:
-        voxel_classes = np.empty(num_voxels, dtype=classes.dtype)
-        class_counts = np.zeros(num_voxels, dtype=np.int64)
-        for point_class in np.unique(classes):
-            class_mask = classes == point_class
-            current_counts = np.bincount(
-                inverse_indices[class_mask], minlength=num_voxels
+        unique_classes, class_indices = np.unique(classes, return_inverse=True)
+        output_classes = np.empty(num_voxels, dtype=classes.dtype)
+        if len(unique_classes) <= 16:
+            class_counts = np.zeros(num_voxels, dtype=np.int64)
+            for class_index, point_class in enumerate(unique_classes):
+                current_counts = np.bincount(
+                    inverse_indices[class_indices == class_index],
+                    minlength=num_voxels,
+                )
+                replace = current_counts > class_counts
+                output_classes[replace] = point_class
+                class_counts[replace] = current_counts[replace]
+        else:
+            voxel_class_pairs = np.column_stack((inverse_indices, class_indices))
+            unique_pairs, pair_counts = np.unique(
+                voxel_class_pairs, axis=0, return_counts=True
             )
-            replace = current_counts > class_counts
-            voxel_classes[replace] = point_class
-            class_counts[replace] = current_counts[replace]
-        return centroids, voxel_classes
+            max_counts = np.zeros(num_voxels, dtype=np.int64)
+            np.maximum.at(max_counts, unique_pairs[:, 0], pair_counts)
+
+            winners = np.flatnonzero(
+                pair_counts == max_counts[unique_pairs[:, 0]]
+            )
+            first_winner = winners[
+                np.r_[
+                    True,
+                    unique_pairs[winners[1:], 0] != unique_pairs[winners[:-1], 0],
+                ]
+            ]
+            output_classes[unique_pairs[first_winner, 0]] = unique_classes[
+                unique_pairs[first_winner, 1]
+            ]
+        return centroids, output_classes
 
     return centroids
 

@@ -101,6 +101,21 @@ def test_voxel_class_is_the_most_common_input_class():
     np.testing.assert_array_equal(result_classes, [2, 9])
 
 
+def test_voxel_class_uses_majority_path_for_many_distinct_classes():
+    points = np.vstack((
+        [[0.1, 0.1, 0.1], [0.2, 0.1, 0.1], [0.3, 0.1, 0.1], [0.4, 0.1, 0.1]],
+        np.column_stack((np.arange(2.0, 22.0), np.zeros(20), np.zeros(20))),
+    ))
+    classes = np.array([2, 3, 2, 3, *range(4, 24)], dtype=np.int32)
+
+    centroids, result_classes = _process_voxel_grid(
+        points, voxel_size=1.0, p_min=np.zeros(3), classes=classes
+    )
+
+    np.testing.assert_allclose(centroids[0], [0.25, 0.1, 0.1])
+    assert result_classes[0] == 2
+
+
 if __name__ == "__main__":
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     for test in tests:
