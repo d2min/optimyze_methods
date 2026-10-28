@@ -26,3 +26,4 @@ data/*.xyz
 # Вывод скриптов
 output/
 exports
+assets
