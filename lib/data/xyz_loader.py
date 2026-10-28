@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import Tuple, Optional
 import logging
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 # Загрузчик файлов формата .xyz

@@ -32,9 +32,10 @@ def _mask_step(fn):
     return run
 
 
-def _hag_step(points, classes, ground_class=2, **kw):
+def _hag_step(points, classes, ground_class=2, verbose=True, **kw):
     if classes is None or not np.any(classes == ground_class):
-        print(f"    (пропущено: нет точек класса {ground_class})")
+        if verbose:
+            print(f"    (пропущено: нет точек класса {ground_class})")
         return np.zeros(len(points), np.int16)
     return height.hag_noise(points, classes == ground_class, **kw)
 
@@ -102,7 +103,12 @@ def clean(points: np.ndarray, classes: np.ndarray = None, steps=ALS_PRESET,
             params = _resolve_scaled(params, scale)
         t = time.perf_counter()
         sub_cls = None if classes is None else classes[alive]
-        c = STEPS[step["name"]](points[alive], sub_cls, **params)
+        if step["name"] == "hag":
+            c = STEPS[step["name"]](
+                points[alive], sub_cls, verbose=verbose, **params
+            )
+        else:
+            c = STEPS[step["name"]](points[alive], sub_cls, **params)
         bad = c > 0
         codes[alive[bad]] = c[bad]
         removed_by[alive[bad]] = si

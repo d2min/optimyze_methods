@@ -45,3 +45,31 @@ a x y z
     </tr>
   </tbody>
 </table>
+
+### Использование как библиотеки
+
+Для динамической обработки используйте генератор: результат по каждому файлу
+поступает сразу после его обработки, не дожидаясь остальных файлов:
+
+```python
+from lib import iter_process_directory
+
+for file_result in iter_process_directory("path/to/xyz-files"):
+    print(file_result.input_path, file_result.success, file_result.error)
+```
+
+Если нужен единый итоговый отчет после обработки всех файлов, используйте обычный
+вызов с `return`:
+
+```python
+from lib import process_directory
+
+report = process_directory("path/to/xyz-files")
+print(report.success, report.files)
+```
+
+По умолчанию библиотечный API не очищает папку экспорта и не выводит прогресс
+в консоль. Параметры `clear_export_dir=True` и `verbose=True` включают очистку
+папки перед запуском и консольные сообщения соответственно. Ошибки отдельного
+файла находятся в его `FileProcessingResult.error`; ошибки входной папки
+возникают как исключения.
