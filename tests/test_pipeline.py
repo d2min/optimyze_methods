@@ -28,12 +28,16 @@ def _mock_pipeline():
                 raise ValueError("invalid input")
             return classes, points
 
+    class NPYLoader(Loader):
+        pass
+
     def export(*, filepath, **_kwargs):
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         np.save(filepath, np.zeros((1, 1)))
 
     return (
         patch.object(pipeline, "XYZLoader", Loader),
+        patch.object(pipeline, "NPYLoader", NPYLoader),
         patch.object(
             pipeline, "downsample_point_cloud",
             lambda points, **_kwargs: (points, classes),
@@ -67,15 +71,16 @@ def test_directory_api_returns_results_and_yields_per_file():
         export_dir = root / "output"
         input_dir.mkdir()
         (input_dir / "good.xyz").touch()
+        (input_dir / "points.npy").touch()
         (input_dir / "bad.xyz").touch()
         (input_dir / "ignored.txt").touch()
 
         patches = _mock_pipeline()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
             report = process_directory(input_dir, export_dir)
             assert report.success is False
             assert report.exit_code == 1
-            assert len(report.files) == 2
+            assert len(report.files) == 3
             good = next(
                 (result for result in report.files if result.success),
                 None,
@@ -84,12 +89,16 @@ def test_directory_api_returns_results_and_yields_per_file():
             assert good.output_points == 3
             assert good.ground_source == "class"
             assert good.output_path.is_file()
+            npy = next(result for result in report.files if result.input_path.suffix == ".npy")
+            assert npy.success
+            assert "NPYLoader.load" in npy.timings
             bad = next(result for result in report.files if not result.success)
             assert bad.error == "invalid input"
 
         (input_dir / "bad.xyz").unlink()
+        (input_dir / "points.npy").unlink()
         patches = _mock_pipeline()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
             yielded = list(iter_process_directory(input_dir, export_dir))
         assert len(yielded) == 1
         assert yielded[0].success
@@ -114,7 +123,7 @@ def test_directory_iterator_processes_each_file_lazily():
                 return super().load()
 
         loader_patch = patch.object(pipeline, "XYZLoader", TrackingLoader)
-        with loader_patch, patches[1], patches[2], patches[3], patches[4], patches[5]:
+        with loader_patch, patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
             results = iter_process_directory(input_dir, root / "output")
             assert loaded_files == []
             first = next(results)

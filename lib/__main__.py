@@ -14,7 +14,7 @@ else:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if not args:
-        print("Ошибка: укажите путь к папке с файлами .xyz!")
+        print("Ошибка: укажите путь к папке с файлами .xyz или .npy!")
         return 1
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

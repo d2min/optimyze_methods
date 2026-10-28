@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterator, TypeVar
 
 from .data.xyz_export import export_k_folks_features_to_npy
+from .data.npy_loader import NPYLoader
 from .data.xyz_loader import XYZLoader
 from .optimization.downsampling.voxel import downsample_point_cloud
 from .optimization.features import compute_features
@@ -81,8 +82,9 @@ def _process_file(filepath: Path, export_dir: Path, verbose: bool) -> FileProces
         return value
 
     try:
+        loader = NPYLoader if filepath.suffix.lower() == ".npy" else XYZLoader
         classes, points = run_step(
-            "XYZLoader.load", lambda: XYZLoader(str(filepath)).load()
+            f"{loader.__name__}.load", lambda: loader(str(filepath)).load()
         )
         result.input_points = len(points)
 
@@ -155,10 +157,10 @@ def iter_process_directory(
 
     files = sorted(
         path for path in input_path.iterdir()
-        if path.is_file() and path.suffix.lower() == ".xyz"
+        if path.is_file() and path.suffix.lower() in {".xyz", ".npy"}
     )
     if not files:
-        raise ValueError(f"В папке нет файлов .xyz: {input_path}")
+        raise ValueError(f"В папке нет файлов .xyz или .npy: {input_path}")
 
     output_dir = Path(export_dir).resolve()
     if output_dir == input_path or output_dir in input_path.parents:
