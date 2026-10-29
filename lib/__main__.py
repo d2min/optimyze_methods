@@ -1,4 +1,5 @@
 """Command-line entry point for folder processing."""
+import argparse
 import logging
 import sys
 import time
@@ -13,7 +14,15 @@ else:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if not args:
+    parser = argparse.ArgumentParser(description="Обработка облаков точек.")
+    parser.add_argument("input_dir", nargs="?", help="Папка с файлами .xyz или .npy")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="экспортировать облако в XYZ сразу после прореживания, без остальных шагов",
+    )
+    parsed = parser.parse_args(args)
+    if not parsed.input_dir:
         print("Ошибка: укажите путь к папке с файлами .xyz или .npy!")
         return 1
 
@@ -22,7 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     failures = 0
     try:
         results = iter_process_directory(
-            args[0], clear_export_dir=True, verbose=True
+            parsed.input_dir,
+            clear_export_dir=True,
+            verbose=True,
+            debug=parsed.debug,
         )
         for result in results:
             print(
@@ -40,8 +52,10 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             print(f"Общее число точек после обработки {result.output_points}")
-            print(f"Земля для HAG взята из: {result.ground_source}")
-            print("Успешный импорт folks точек")
+            if parsed.debug:
+                print(f"Экспорт прореженного облака: {result.output_path}")
+            else:
+                print(f"Экспорт очищенного облака: {result.output_path}")
             print("--------------------------------------------------------------")
     except (NotADirectoryError, ValueError, OSError) as error:
         print(f"Ошибка: {error}")

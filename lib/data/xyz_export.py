@@ -1,5 +1,7 @@
 """Экспорт массивов облака точек и k_folks в CSV и NPY."""
+import os
 from pathlib import Path
+import tempfile
 
 import numpy as np
 
@@ -56,25 +58,46 @@ def export_points_to_csv(points: np.ndarray, filepath: str | Path,
 
 
 def export_points_to_npy(points: np.ndarray, filepath: str | Path,
-                         classes: np.ndarray = None) -> None:
-    """Экспортировать облако точек формы (N, 3) в NPY."""
+                         classes: np.ndarray = None,
+                         features: np.ndarray = None) -> None:
+    """Экспортировать точки в NPY: class (если есть), XYZ, признаки (если есть)."""
     matrix = _validate_numeric_matrix(points, "points")
     if matrix.shape[1] != 3:
         raise ValueError(f"points должен иметь форму (N, 3), получена форма {matrix.shape}")
-    if classes is None:
+    if classes is None and features is None:
         _write_npy(matrix, filepath)
         return
 
-    labels = np.asarray(classes)
-    if labels.ndim != 1 or len(labels) != len(matrix):
-        raise ValueError(
-            f"classes должен иметь форму ({len(matrix)},), получена форма {labels.shape}"
-        )
-    if not np.issubdtype(labels.dtype, np.number):
-        raise TypeError("classes должен содержать числовые метки")
-    if not np.isfinite(labels).all():
-        raise ValueError("classes не должен содержать NaN или inf")
-    _write_npy(np.column_stack((labels, matrix)), filepath)
+    parts = []
+    if classes is not None:
+        labels = np.asarray(classes)
+        if labels.ndim != 1 or len(labels) != len(matrix):
+            raise ValueError(
+                f"classes должен иметь форму ({len(matrix)},), получена форма {labels.shape}"
+            )
+        if not np.issubdtype(labels.dtype, np.number):
+            raise TypeError("classes должен содержать числовые метки")
+        if not np.isfinite(labels).all():
+            raise ValueError("classes не должен содержать NaN или inf")
+        parts.append(labels[:, None])
+    parts.append(matrix)
+    if features is not None:
+        feature_matrix = _validate_numeric_matrix(features, "features")
+        if len(feature_matrix) != len(matrix):
+            raise ValueError(
+                f"features должен иметь {len(matrix)} строк, "
+                f"получено {len(feature_matrix)}"
+            )
+        parts.append(feature_matrix)
+    if features is None:
+        _write_npy(np.column_stack(parts), filepath)
+        return
+
+    dtype = np.result_type(matrix.dtype, feature_matrix.dtype, np.float32)
+    _write_npy(
+        np.column_stack([part.astype(dtype, copy=False) for part in parts]),
+        filepath,
+    )
 
 
 def export_k_folks_to_csv(neighbors: np.ndarray, filepath: str | Path,
@@ -218,6 +241,74 @@ def export_k_folks_features_to_npy(neighbors: np.ndarray, features: np.ndarray,
     Тип — float32 (float64, если координаты во float64).
     """
     _write_npy(_k_folks_feature_matrix(neighbors, features, classes), filepath)
+
+
+def export_k_folks_feature_chunks_to_npy(
+    chunks,
+    filepath: str | Path,
+    *,
+    point_count: int,
+    k: int,
+    feature_count: int,
+    dtype,
+    with_classes: bool = True,
+) -> None:
+    """Записать ``(start, chunk)`` блоки iter_k_folks в NPY без сборки в RAM."""
+    if point_count < 0 or k < 0 or feature_count < 0:
+        raise ValueError("point_count, k и feature_count должны быть неотрицательными")
+    group_width = 3 + feature_count + int(with_classes)
+    output_shape = (point_count, (k + 1) * group_width)
+    output_dtype = np.dtype(dtype)
+    path = Path(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    os.close(fd)
+    temporary_path = Path(temporary_name)
+    try:
+        with temporary_path.open("wb") as output:
+            np.lib.format.write_array_header_2_0(
+                output,
+                {
+                    "descr": np.lib.format.dtype_to_descr(output_dtype),
+                    "fortran_order": False,
+                    "shape": output_shape,
+                },
+            )
+            written = 0
+            for start, chunk in chunks:
+                if start != written:
+                    raise ValueError(
+                        f"Получен блок с началом {start}, ожидалось {written}"
+                    )
+                if with_classes:
+                    if not isinstance(chunk, tuple) or len(chunk) != 3:
+                        raise ValueError(
+                            "Каждый блок должен содержать neighbors, classes и features"
+                        )
+                    neighbors, classes, features = chunk
+                else:
+                    if not isinstance(chunk, tuple) or len(chunk) != 2:
+                        raise ValueError("Каждый блок должен содержать neighbors и features")
+                    neighbors, features = chunk
+                    classes = None
+                data = _k_folks_feature_matrix(neighbors, features, classes)
+                stop = written + len(data)
+                if stop > point_count:
+                    raise ValueError("Блоки содержат больше строк, чем point_count")
+                if data.dtype != output_dtype:
+                    data = data.astype(output_dtype, copy=False)
+                data.tofile(output)
+                written = stop
+            if written != point_count:
+                raise ValueError(
+                    f"Блоки содержат {written} строк, ожидалось {point_count}"
+                )
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
 
 
 def export_k_folks_features_to_csv(neighbors: np.ndarray, features: np.ndarray,

@@ -12,6 +12,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib import iter_process_directory, process_directory  # noqa: E402
 from lib import pipeline  # noqa: E402
+from lib import __main__ as cli  # noqa: E402
 from lib.optimization.filtering import clean  # noqa: E402
 
 
@@ -31,10 +32,6 @@ def _mock_pipeline():
     class NPYLoader(Loader):
         pass
 
-    def export(*, filepath, **_kwargs):
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        np.save(filepath, np.zeros((1, 1)))
-
     return (
         patch.object(pipeline, "XYZLoader", Loader),
         patch.object(pipeline, "NPYLoader", NPYLoader),
@@ -51,16 +48,10 @@ def _mock_pipeline():
         patch.object(
             pipeline, "compute_features",
             lambda *_args, **_kwargs: SimpleNamespace(
-                values=np.zeros((3, 1)), ground_source="class"
+                values=np.tile([10, 0, 0, 1, 1], (3, 1)).astype(np.float32),
+                ground_source="class",
             ),
         ),
-        patch.object(
-            pipeline, "k_folks",
-            lambda **_kwargs: (
-                np.zeros((3, 3)), np.zeros((3, 1)), np.zeros((3, 1, 1))
-            ),
-        ),
-        patch.object(pipeline, "export_k_folks_features_to_npy", export),
     )
 
 
@@ -76,7 +67,7 @@ def test_directory_api_returns_results_and_yields_per_file():
         (input_dir / "ignored.txt").touch()
 
         patches = _mock_pipeline()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             report = process_directory(input_dir, export_dir)
             assert report.success is False
             assert report.exit_code == 1
@@ -92,13 +83,17 @@ def test_directory_api_returns_results_and_yields_per_file():
             npy = next(result for result in report.files if result.input_path.suffix == ".npy")
             assert npy.success
             assert "NPYLoader.load" in npy.timings
+            assert "compute_features" in npy.timings
+            assert npy.output_path.name == "points_cleaned.npy"
+            expected = np.tile([0, 0, 0, 0, 10, 0, 0, 1, 1], (3, 1))
+            np.testing.assert_array_equal(np.load(npy.output_path), expected)
             bad = next(result for result in report.files if not result.success)
             assert bad.error == "invalid input"
 
         (input_dir / "bad.xyz").unlink()
         (input_dir / "points.npy").unlink()
         patches = _mock_pipeline()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             yielded = list(iter_process_directory(input_dir, export_dir))
         assert len(yielded) == 1
         assert yielded[0].success
@@ -123,7 +118,7 @@ def test_directory_iterator_processes_each_file_lazily():
                 return super().load()
 
         loader_patch = patch.object(pipeline, "XYZLoader", TrackingLoader)
-        with loader_patch, patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with loader_patch, patches[1], patches[2], patches[3], patches[4]:
             results = iter_process_directory(input_dir, root / "output")
             assert loaded_files == []
             first = next(results)
@@ -132,6 +127,52 @@ def test_directory_iterator_processes_each_file_lazily():
             second = next(results)
             assert second.input_path.name == "second.xyz"
             assert loaded_files == ["first.xyz", "second.xyz"]
+
+
+def test_debug_exports_downsampled_xyz_and_skips_remaining_steps():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        input_dir = root / "input"
+        input_dir.mkdir()
+        (input_dir / "cloud.xyz").touch()
+        export_dir = root / "output"
+        patches = _mock_pipeline()
+        with (
+            patches[0],
+            patches[2],
+            patch.object(pipeline, "clean", side_effect=AssertionError("clean called")),
+            patch.object(
+                pipeline, "compute_features",
+                side_effect=AssertionError("features called"),
+            ),
+        ):
+            result = next(iter_process_directory(input_dir, export_dir, debug=True))
+
+        assert result.success, result.error
+        assert result.output_points == 3
+        assert result.output_path == export_dir / "cloud_downsampled.xyz"
+        exported = np.loadtxt(result.output_path)
+        assert exported.shape == (3, 4)
+        np.testing.assert_array_equal(exported[:, 0], np.zeros(3))
+        assert "export_downsampled_xyz" in result.timings
+
+
+def test_cli_debug_flag_enables_debug_pipeline():
+    received = {}
+
+    def fake_iter_process_directory(input_dir, **kwargs):
+        received["input_dir"] = input_dir
+        received.update(kwargs)
+        return iter(())
+
+    with (
+        patch.object(cli, "iter_process_directory", fake_iter_process_directory),
+        redirect_stdout(StringIO()),
+    ):
+        assert cli.main([".\\assets\\", "--debug"]) == 0
+
+    assert received["debug"] is True
+    assert received["clear_export_dir"] is True
 
 
 def test_silent_clean_does_not_print_when_hag_step_is_skipped():
@@ -151,5 +192,9 @@ if __name__ == "__main__":
     print("ok  test_directory_api_returns_results_and_yields_per_file")
     test_directory_iterator_processes_each_file_lazily()
     print("ok  test_directory_iterator_processes_each_file_lazily")
+    test_debug_exports_downsampled_xyz_and_skips_remaining_steps()
+    print("ok  test_debug_exports_downsampled_xyz_and_skips_remaining_steps")
+    test_cli_debug_flag_enables_debug_pipeline()
+    print("ok  test_cli_debug_flag_enables_debug_pipeline")
     test_silent_clean_does_not_print_when_hag_step_is_skipped()
     print("ok  test_silent_clean_does_not_print_when_hag_step_is_skipped")

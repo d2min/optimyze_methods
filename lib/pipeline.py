@@ -8,13 +8,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, TypeVar
 
-from .data.xyz_export import export_k_folks_features_to_npy
+from .data.xyz_export import export_points_to_npy
 from .data.npy_loader import NPYLoader
 from .data.xyz_loader import XYZLoader
+from .data.xyz_saver import save_points_to_xyz
 from .optimization.downsampling.voxel import downsample_point_cloud
 from .optimization.features import compute_features
 from .optimization.filtering import clean
-from .optimization.k_folks import k_folks
 
 T = TypeVar("T")
 
@@ -53,14 +53,14 @@ class ProcessingResult:
 
 def _find_target(point_count: int) -> int:
     if point_count > 5_000_000:
-        return 2_000_000
+        return 3_000_000
     if point_count > 3_000_000:
-        return 1_000_000
+        return 1_00_000
     if point_count > 500_000:
         return 200_000
     if point_count > 100_000:
-        return point_count - 1
-    return point_count
+        return 100_000
+    return point_count - 1
 
 
 def _clear_directory(directory: Path) -> None:
@@ -72,7 +72,9 @@ def _clear_directory(directory: Path) -> None:
             shutil.rmtree(path)
 
 
-def _process_file(filepath: Path, export_dir: Path, verbose: bool) -> FileProcessingResult:
+def _process_file(
+    filepath: Path, export_dir: Path, verbose: bool, debug: bool
+) -> FileProcessingResult:
     result = FileProcessingResult(input_path=filepath, success=False)
 
     def run_step(name: str, operation: Callable[[], T]) -> T:
@@ -97,6 +99,19 @@ def _process_file(filepath: Path, export_dir: Path, verbose: bool) -> FileProces
             ),
         )
 
+        if debug:
+            result.output_points = len(result_points)
+            output_path = export_dir / f"{filepath.stem}_downsampled.xyz"
+            run_step(
+                "export_downsampled_xyz",
+                lambda: save_points_to_xyz(
+                    result_points, output_path, classes=result_classes
+                ),
+            )
+            result.output_path = output_path
+            result.success = True
+            return result
+
         result_clean = run_step(
             "clean", lambda: clean(result_points, result_classes, verbose=verbose)
         )
@@ -110,28 +125,17 @@ def _process_file(filepath: Path, export_dir: Path, verbose: bool) -> FileProces
         )
         result.ground_source = point_features.ground_source
 
-        folks_result, folks_classes, folks_features = run_step(
-            "k_folks",
-            lambda: k_folks(
-                points=result_points,
-                k=400,
+        output_path = export_dir / f"{filepath.stem}_cleaned.npy"
+        run_step(
+            "export_points_to_npy",
+            lambda: export_points_to_npy(
+                result_points,
+                output_path,
                 classes=result_classes,
                 features=point_features.values,
-                show_progress=verbose,
             ),
         )
-
-        requested_path = export_dir / f"{filepath.stem}_k_folks.csv"
-        run_step(
-            "export_k_folks_features_to_npy",
-            lambda: export_k_folks_features_to_npy(
-                neighbors=folks_result,
-                features=folks_features,
-                filepath=requested_path,
-                classes=folks_classes,
-            ),
-        )
-        result.output_path = requested_path.with_name(requested_path.name + ".npy")
+        result.output_path = output_path
         result.success = True
     except Exception as error:
         result.error = str(error)
@@ -145,8 +149,14 @@ def iter_process_directory(
     *,
     clear_export_dir: bool = False,
     verbose: bool = False,
+    debug: bool = False,
 ) -> Iterator[FileProcessingResult]:
     """Yield one result per input file as it finishes processing.
+
+    By default, clean the downsampled points and export them as NPY.
+    With ``debug=True``, export the downsampled points as XYZ and skip cleanup.
+    Feature calculation is included in NPY output; nearest-neighbor generation
+    is currently disabled.
 
     Invalid directories and export-directory setup errors are raised to the
     caller. Errors processing an individual file are reported in its result.
@@ -169,7 +179,7 @@ def iter_process_directory(
         _clear_directory(output_dir)
 
     for filepath in files:
-        yield _process_file(filepath, output_dir, verbose)
+        yield _process_file(filepath, output_dir, verbose, debug)
 
 
 def process_directory(
@@ -178,8 +188,9 @@ def process_directory(
     *,
     clear_export_dir: bool = False,
     verbose: bool = False,
+    debug: bool = False,
 ) -> ProcessingResult:
-    """Process all XYZ files and return a structured aggregate result."""
+    """Process all point-cloud files and return a structured aggregate result."""
     started_at = time.perf_counter()
     input_path = Path(input_dir).resolve()
     output_dir = Path(export_dir).resolve()
@@ -188,6 +199,7 @@ def process_directory(
         output_dir,
         clear_export_dir=clear_export_dir,
         verbose=verbose,
+        debug=debug,
     ))
     return ProcessingResult(
         input_dir=input_path,

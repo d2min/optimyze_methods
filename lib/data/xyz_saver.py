@@ -17,7 +17,10 @@ def save_points_to_xyz(points: np.ndarray, filepath: str = "./exports/points.xyz
     except FileExistsError:
         # exist_ok=True не сработал — значит там НЕ директория
         if os.path.isfile(dir_path) or os.path.islink(dir_path):
-            print(f"⚠️ По пути '{dir_path}' находится файл или симлинк. Удаляем и создаем настоящую папку...")
+            print(
+                f"Path {dir_path!a} contains a file or symlink. "
+                "Removing it and creating a directory..."
+            )
             os.remove(dir_path)
             os.makedirs(dir_path)
         else:
@@ -28,4 +31,4 @@ def save_points_to_xyz(points: np.ndarray, filepath: str = "./exports/points.xyz
     cls = np.zeros(points.shape[0], dtype=int) if classes is None else np.asarray(classes)
     output_data = np.column_stack((cls, points))
     np.savetxt(filepath, output_data, fmt='%d %.6f %.6f %.6f')
-    print(f"✅ Файл сохранен: {abs_path}")
+    print(f"File saved: {abs_path!a}")

@@ -13,8 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib.optimization.features import (  # noqa: E402
     FEATURE_COLUMNS, compute_features, estimate_normals, ground_mask,
 )
-from lib.optimization.k_folks.k_folks import k_folks  # noqa: E402
+from lib.optimization.k_folks.k_folks import iter_k_folks, k_folks  # noqa: E402
 from lib.data.xyz_export import (  # noqa: E402
+    export_k_folks_feature_chunks_to_npy,
     export_k_folks_features_to_csv, export_k_folks_features_to_npy,
     k_folks_feature_columns,
 )
@@ -42,9 +43,13 @@ def _scene(n_ground=20000, seed=0):
 def test_normals_on_tilted_plane_point_up():
     xy = rng.uniform(0, 20, (5000, 2))
     plane = np.column_stack([xy, 0.5 * xy[:, 0]])
+    original = plane.copy()
     n = estimate_normals(plane)
+    chunked = estimate_normals(plane, chunk=257)
     expected = np.array([-0.5, 0.0, 1.0]) / np.sqrt(1.25)
     np.testing.assert_allclose(np.median(n, axis=0), expected, atol=1e-3)
+    np.testing.assert_array_equal(chunked, n)
+    np.testing.assert_array_equal(plane, original)
     assert (n[:, 2] >= 0).all()
     np.testing.assert_allclose(np.linalg.norm(n, axis=1), 1, atol=1e-5)
     assert n.dtype == np.float32
@@ -126,6 +131,36 @@ def test_k_folks_features_follow_neighbors():
     np.testing.assert_array_equal(nf, nf2)
     r0, f0 = k_folks(pts, k=0, show_progress=False, features=feats)
     assert f0.shape == (60, 1, 4)
+
+
+def test_streaming_k_folks_export_matches_in_memory_export():
+    pts = rng.normal(size=(9005, 3)).astype(np.float32)
+    cls = rng.integers(0, 7, 9005, dtype=np.int32)
+    feats = rng.normal(size=(9005, 5)).astype(np.float32)
+    expected_neighbors, expected_classes, expected_features = k_folks(
+        pts, k=4, show_progress=False, classes=cls, features=feats
+    )
+    chunks = iter_k_folks(
+        pts, k=4, show_progress=False, classes=cls, features=feats
+    )
+    with tempfile.TemporaryDirectory() as d:
+        expected_path = Path(d) / "expected.npy"
+        actual_path = Path(d) / "actual.npy"
+        export_k_folks_features_to_npy(
+            expected_neighbors, expected_features, expected_path,
+            classes=expected_classes,
+        )
+        export_k_folks_feature_chunks_to_npy(
+            chunks,
+            actual_path,
+            point_count=len(pts),
+            k=4,
+            feature_count=feats.shape[1],
+            dtype=np.float32,
+            with_classes=True,
+        )
+        actual = np.load(actual_path)
+        np.testing.assert_array_equal(actual, np.load(expected_path))
 
 
 def test_export_layout_x_y_z_features_class():

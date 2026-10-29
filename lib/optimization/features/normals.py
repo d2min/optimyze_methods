@@ -12,7 +12,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
-def estimate_normals(points: np.ndarray, k: int = 20, chunk: int = 200_000) -> np.ndarray:
+def estimate_normals(points: np.ndarray, k: int = 20, chunk: int = 20_000) -> np.ndarray:
     """Единичные нормали (N, 3) float32, nz ≥ 0.
 
     k     — размер окрестности. 20 — стандартный выбор: достаточно, чтобы
@@ -20,7 +20,7 @@ def estimate_normals(points: np.ndarray, k: int = 20, chunk: int = 200_000) -> n
     chunk — сколько точек обрабатывать за раз (ограничивает память).
     Если точек меньше 3, возвращается (0, 0, 1).
     """
-    p = np.asarray(points, dtype=np.float64)
+    p = np.array(points, dtype=np.float64, copy=True)
     if p.ndim != 2 or p.shape[1] != 3:
         raise ValueError(f"points должен иметь форму (N, 3), получена форма {p.shape}")
     n = len(p)
@@ -28,7 +28,7 @@ def estimate_normals(points: np.ndarray, k: int = 20, chunk: int = 200_000) -> n
     out[:, 2] = 1.0
     if n < 3:
         return out
-    p = p - p.mean(axis=0)                  # точность на UTM-координатах
+    p -= p.mean(axis=0)                     # точность на UTM-координатах
     k = int(min(max(k, 3), n))
     tree = cKDTree(p)
     for s in range(0, n, chunk):
