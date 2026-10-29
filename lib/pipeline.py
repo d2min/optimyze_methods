@@ -55,7 +55,7 @@ def _find_target(point_count: int) -> int:
     if point_count > 5_000_000:
         return 3_000_000
     if point_count > 3_000_000:
-        return 1_00_000
+        return 1_000_000
     if point_count > 500_000:
         return 200_000
     if point_count > 100_000:
