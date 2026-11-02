@@ -6,7 +6,7 @@ import numpy as np
 
 
 class NPYLoader:
-    """Загружает массивы (N, 4) в формате class, x, y, z или (N, 3) xyz."""
+    """Загружает массивы (N, 4) class, xyz / xyz, class или (N, 3) xyz."""
 
     def __init__(self, filepath: str | Path):
         self.filepath = Path(filepath)
@@ -27,8 +27,14 @@ class NPYLoader:
         if not np.isfinite(data).all():
             raise ValueError("NPY-массив не должен содержать NaN или inf")
         if data.shape[1] == 4:
-            classes = data[:, 0].astype(np.int32)
-            points = np.ascontiguousarray(data[:, 1:4])
+            first_is_integer = np.equal(data[:, 0], np.floor(data[:, 0])).all()
+            last_is_integer = np.equal(data[:, 3], np.floor(data[:, 3])).all()
+            if not first_is_integer and last_is_integer:
+                classes = data[:, 3].astype(np.int32)
+                points = np.ascontiguousarray(data[:, :3])
+            else:
+                classes = data[:, 0].astype(np.int32)
+                points = np.ascontiguousarray(data[:, 1:4])
         else:
             classes = np.zeros(len(data), dtype=np.int32)
             points = np.ascontiguousarray(data)

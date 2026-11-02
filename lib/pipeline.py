@@ -1,12 +1,15 @@
 """Reusable API for processing folders of XYZ point-cloud files."""
 from __future__ import annotations
 
+import json
 import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, TypeVar
+
+import numpy as np
 
 from .data.xyz_export import export_points_to_npy
 from .data.npy_loader import NPYLoader
@@ -17,6 +20,7 @@ from .optimization.features import compute_features
 from .optimization.filtering import clean
 
 T = TypeVar("T")
+CoordinateRange = dict[str, dict[str, float | None]]
 
 
 @dataclass
@@ -26,11 +30,27 @@ class FileProcessingResult:
     input_path: Path
     success: bool
     input_points: int | None = None
+    unique_classes: int | None = None
+    points_removed_by_filter: int | None = None
+    coordinate_range: CoordinateRange | None = None
     output_points: int | None = None
     output_path: Path | None = None
     ground_source: str | None = None
     timings: dict[str, float] = field(default_factory=dict)
     error: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible representation of this file's result."""
+        return {
+            "file_name": self.input_path.name,
+            "success": self.success,
+            "rows_loaded": self.input_points,
+            "unique_classes": self.unique_classes,
+            "points_removed_by_filter": self.points_removed_by_filter,
+            "coordinate_range": self.coordinate_range,
+            "output_points": self.output_points,
+            "error": self.error,
+        }
 
 
 @dataclass
@@ -49,6 +69,40 @@ class ProcessingResult:
     @property
     def exit_code(self) -> int:
         return 0 if self.success else 1
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible representation of the complete report."""
+        return {
+            "success": self.success,
+            "input_dir": str(self.input_dir),
+            "export_dir": str(self.export_dir),
+            "elapsed_seconds": self.elapsed_seconds,
+            "files": [result.to_dict() for result in self.files],
+        }
+
+    def to_json(self, *, indent: int | None = 2) -> str:
+        """Serialize the complete report as standards-compliant JSON."""
+        return json.dumps(
+            self.to_dict(),
+            ensure_ascii=False,
+            indent=indent,
+            allow_nan=False,
+        )
+
+
+def _coordinate_range(points: np.ndarray) -> CoordinateRange:
+    ranges: CoordinateRange = {}
+    for axis_index, axis_name in enumerate(("x", "y", "z")):
+        values = points[:, axis_index]
+        finite_values = values[np.isfinite(values)]
+        if finite_values.size:
+            ranges[axis_name] = {
+                "min": float(finite_values.min()),
+                "max": float(finite_values.max()),
+            }
+        else:
+            ranges[axis_name] = {"min": None, "max": None}
+    return ranges
 
 
 def _find_target(point_count: int) -> int:
@@ -89,6 +143,8 @@ def _process_file(
             f"{loader.__name__}.load", lambda: loader(str(filepath)).load()
         )
         result.input_points = len(points)
+        result.unique_classes = int(np.unique(classes).size)
+        result.coordinate_range = _coordinate_range(points)
 
         result_points, result_classes = run_step(
             "downsample_point_cloud",
@@ -117,6 +173,9 @@ def _process_file(
         )
         result_points = result_points[result_clean.keep]
         result_classes = result_classes[result_clean.keep]
+        result.points_removed_by_filter = int(
+            np.count_nonzero(~result_clean.keep)
+        )
         result.output_points = len(result_points)
 
         point_features = run_step(
@@ -207,3 +266,21 @@ def process_directory(
         files=files,
         elapsed_seconds=time.perf_counter() - started_at,
     )
+
+
+def process_directory_json(
+    input_dir: str | Path,
+    export_dir: str | Path = "exports",
+    *,
+    clear_export_dir: bool = False,
+    verbose: bool = False,
+    debug: bool = False,
+) -> str:
+    """Process a folder and return its complete report as a JSON string."""
+    return process_directory(
+        input_dir,
+        export_dir,
+        clear_export_dir=clear_export_dir,
+        verbose=verbose,
+        debug=debug,
+    ).to_json()

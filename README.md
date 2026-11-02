@@ -50,7 +50,9 @@ a x y z
 
 Для обработки папки используйте файлы `.xyz` с колонками `class, x, y, z`
 или `.npy` с массивом формы `(N, 4)` (`class, x, y, z`). Также `.npy`
-поддерживает массив формы `(N, 3)` (`x, y, z`); таким точкам назначается класс 0.
+поддерживает порядок `(x, y, z, class)`, если первый столбец содержит
+нецелочисленные координаты, а последний — целочисленные метки. Массив формы
+`(N, 3)` (`x, y, z`) также поддерживается; таким точкам назначается класс 0.
 Формат каждого файла выбирается автоматически. Для динамической обработки
 используйте генератор: результат по каждому файлу поступает сразу после его
 обработки, не дожидаясь остальных файлов:
@@ -70,6 +72,25 @@ from lib import process_directory
 
 report = process_directory("path/to/xyz-files")
 print(report.success, report.files)
+```
+
+Для получения готовой JSON-строки используйте `process_directory_json`.
+Отчёт содержит общий статус и отдельную запись для каждого файла. В ней
+`rows_loaded` — число загруженных строк, `unique_classes` — число уникальных
+классов, `points_removed_by_filter` — число точек, удалённых фильтрацией после
+прореживания, а `coordinate_range` — диапазон исходных координат по осям X, Y
+и Z. Если фильтрация не запускалась (например, в режиме `debug=True`), её
+результат равен `null`.
+
+```python
+import json
+
+from lib import process_directory_json
+
+report_json = process_directory_json("path/to/xyz-files")
+report = json.loads(report_json)
+for file_result in report["files"]:
+print(file_result["file_name"], file_result["rows_loaded"])
 ```
 
 В обычном режиме pipeline прореживает и очищает облако, а затем сохраняет

@@ -5,6 +5,7 @@ from .pipeline import (
     ProcessingResult,
     iter_process_directory,
     process_directory,
+    process_directory_json,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "ProcessingResult",
     "iter_process_directory",
     "process_directory",
+    "process_directory_json",
 ]

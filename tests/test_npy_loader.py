@@ -34,6 +34,19 @@ def test_loads_xyz_columns_with_default_class():
     np.testing.assert_array_equal(loaded_points, points)
 
 
+def test_loads_xyz_and_class_columns():
+    points = np.array([[0.1, 2.5, 3.0], [4.5, 5.0, 6.0]])
+    classes = np.array([2, 6])
+    with tempfile.TemporaryDirectory() as temp_dir:
+        filepath = Path(temp_dir) / "points.npy"
+        np.save(filepath, np.column_stack((points, classes)))
+
+        loaded_classes, loaded_points = NPYLoader(filepath).load()
+
+    np.testing.assert_array_equal(loaded_classes, classes)
+    np.testing.assert_array_equal(loaded_points, points)
+
+
 def test_rejects_unsupported_array_shape():
     with tempfile.TemporaryDirectory() as temp_dir:
         filepath = Path(temp_dir) / "points.npy"

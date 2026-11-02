@@ -1,4 +1,5 @@
 """Tests for the public folder-processing API."""
+import json
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -11,6 +12,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib import iter_process_directory, process_directory  # noqa: E402
+from lib import process_directory_json  # noqa: E402
 from lib import pipeline  # noqa: E402
 from lib import __main__ as cli  # noqa: E402
 from lib.optimization.filtering import clean  # noqa: E402
@@ -78,6 +80,14 @@ def test_directory_api_returns_results_and_yields_per_file():
             )
             assert good is not None, report.files
             assert good.output_points == 3
+            assert good.input_points == 3
+            assert good.unique_classes == 1
+            assert good.points_removed_by_filter == 0
+            assert good.coordinate_range == {
+                "x": {"min": 0.0, "max": 0.0},
+                "y": {"min": 0.0, "max": 0.0},
+                "z": {"min": 0.0, "max": 0.0},
+            }
             assert good.ground_source == "class"
             assert good.output_path.is_file()
             npy = next(result for result in report.files if result.input_path.suffix == ".npy")
@@ -97,6 +107,68 @@ def test_directory_api_returns_results_and_yields_per_file():
             yielded = list(iter_process_directory(input_dir, export_dir))
         assert len(yielded) == 1
         assert yielded[0].success
+
+
+def test_process_directory_json_reports_file_statistics():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        input_dir = root / "input"
+        input_dir.mkdir()
+        (input_dir / "cloud.xyz").touch()
+        classes = np.array([2, 6, 6], dtype=np.int32)
+        points = np.array(
+            [[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32
+        )
+
+        class Loader:
+            def __init__(self, _filepath):
+                pass
+
+            def load(self):
+                return classes, points
+
+        with (
+            patch.object(pipeline, "XYZLoader", Loader),
+            patch.object(pipeline, "NPYLoader", Loader),
+            patch.object(
+                pipeline, "downsample_point_cloud",
+                lambda points, classes, **_kwargs: (points, classes),
+            ),
+            patch.object(
+                pipeline,
+                "clean",
+                lambda points, _classes=None, **_kwargs: SimpleNamespace(
+                    keep=np.array([True, False, True])
+                ),
+            ),
+            patch.object(
+                pipeline,
+                "compute_features",
+                lambda points, *_args, **_kwargs: SimpleNamespace(
+                    values=np.zeros((len(points), 5), dtype=np.float32),
+                    ground_source="class",
+                ),
+            ),
+        ):
+            report = json.loads(
+                process_directory_json(input_dir, root / "output")
+            )
+
+    assert report["success"] is True
+    file_result = report["files"][0]
+    assert file_result["file_name"] == "cloud.xyz"
+    assert "input_path" not in file_result
+    assert "timings" not in file_result
+    assert "ground_source" not in file_result
+    assert "output_path" not in file_result
+    assert file_result["rows_loaded"] == 3
+    assert file_result["unique_classes"] == 2
+    assert file_result["points_removed_by_filter"] == 1
+    assert file_result["coordinate_range"] == {
+        "x": {"min": 1.0, "max": 7.0},
+        "y": {"min": 2.0, "max": 8.0},
+        "z": {"min": 3.0, "max": 9.0},
+    }
 
 
 def test_directory_iterator_processes_each_file_lazily():
@@ -150,6 +222,7 @@ def test_debug_exports_downsampled_xyz_and_skips_remaining_steps():
 
         assert result.success, result.error
         assert result.output_points == 3
+        assert result.points_removed_by_filter is None
         assert result.output_path == export_dir / "cloud_downsampled.xyz"
         exported = np.loadtxt(result.output_path)
         assert exported.shape == (3, 4)
@@ -190,6 +263,8 @@ def test_silent_clean_does_not_print_when_hag_step_is_skipped():
 if __name__ == "__main__":
     test_directory_api_returns_results_and_yields_per_file()
     print("ok  test_directory_api_returns_results_and_yields_per_file")
+    test_process_directory_json_reports_file_statistics()
+    print("ok  test_process_directory_json_reports_file_statistics")
     test_directory_iterator_processes_each_file_lazily()
     print("ok  test_directory_iterator_processes_each_file_lazily")
     test_debug_exports_downsampled_xyz_and_skips_remaining_steps()
