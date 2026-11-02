@@ -17,10 +17,11 @@ from .data.xyz_loader import XYZLoader
 from .data.xyz_saver import save_points_to_xyz
 from .optimization.downsampling.voxel import downsample_point_cloud
 from .optimization.features import compute_features
-from .optimization.filtering import clean
+from .optimization.filtering import clean, density_scale
 
 T = TypeVar("T")
 CoordinateRange = dict[str, dict[str, float | None]]
+FilterStatistics = dict[str, int | float]
 
 
 @dataclass
@@ -30,8 +31,11 @@ class FileProcessingResult:
     input_path: Path
     success: bool
     input_points: int | None = None
-    unique_classes: int | None = None
+    unique_classes: list[int] | None = None
+    point_cloud_step_before_downsampling: float | None = None
+    point_cloud_step_after_downsampling: float | None = None
     points_removed_by_filter: int | None = None
+    filters_result: dict[str, FilterStatistics] = field(default_factory=dict)
     coordinate_range: CoordinateRange | None = None
     output_points: int | None = None
     output_path: Path | None = None
@@ -46,7 +50,14 @@ class FileProcessingResult:
             "success": self.success,
             "rows_loaded": self.input_points,
             "unique_classes": self.unique_classes,
+            "point_cloud_step_before_downsampling": (
+                self.point_cloud_step_before_downsampling
+            ),
+            "point_cloud_step_after_downsampling": (
+                self.point_cloud_step_after_downsampling
+            ),
             "points_removed_by_filter": self.points_removed_by_filter,
+            "filters_result": self.filters_result,
             "coordinate_range": self.coordinate_range,
             "output_points": self.output_points,
             "error": self.error,
@@ -117,6 +128,12 @@ def _find_target(point_count: int) -> int:
     return point_count - 1
 
 
+def _point_cloud_step(points: np.ndarray) -> float | None:
+    if len(points) < 2:
+        return None
+    return density_scale(points, k=min(8, len(points) - 1))
+
+
 def _clear_directory(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     for path in directory.iterdir():
@@ -143,8 +160,12 @@ def _process_file(
             f"{loader.__name__}.load", lambda: loader(str(filepath)).load()
         )
         result.input_points = len(points)
-        result.unique_classes = int(np.unique(classes).size)
+        result.unique_classes = [int(value) for value in np.unique(classes)]
         result.coordinate_range = _coordinate_range(points)
+        result.point_cloud_step_before_downsampling = run_step(
+            "point_cloud_step_before_downsampling",
+            lambda: _point_cloud_step(points),
+        )
 
         result_points, result_classes = run_step(
             "downsample_point_cloud",
@@ -156,6 +177,10 @@ def _process_file(
         )
 
         if debug:
+            result.point_cloud_step_after_downsampling = run_step(
+                "point_cloud_step_after_downsampling",
+                lambda: _point_cloud_step(result_points),
+            )
             result.output_points = len(result_points)
             output_path = export_dir / f"{filepath.stem}_downsampled.xyz"
             run_step(
@@ -171,6 +196,13 @@ def _process_file(
         result_clean = run_step(
             "clean", lambda: clean(result_points, result_classes, verbose=verbose)
         )
+        result.point_cloud_step_after_downsampling = result_clean.cloud_scale
+        if result.point_cloud_step_after_downsampling is None:
+            result.point_cloud_step_after_downsampling = run_step(
+                "point_cloud_step_after_downsampling",
+                lambda: _point_cloud_step(result_points),
+            )
+        result.filters_result = result_clean.filters_result
         result_points = result_points[result_clean.keep]
         result_classes = result_classes[result_clean.keep]
         result.points_removed_by_filter = int(

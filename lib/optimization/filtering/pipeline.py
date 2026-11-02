@@ -14,7 +14,7 @@
     classes_clean, points_clean = classes[res.keep], points[res.keep]
 """
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -84,6 +84,8 @@ class CleanResult:
     codes: np.ndarray       # int16 (N,) — 0 / 7 / 18
     removed_by: np.ndarray  # int16 (N,) — номер шага, -1 если осталась
     steps: list
+    filters_result: dict[str, dict[str, int | float]] = field(default_factory=dict)
+    cloud_scale: float | None = None
 
 
 def clean(points: np.ndarray, classes: np.ndarray = None, steps=ALS_PRESET,
@@ -92,11 +94,14 @@ def clean(points: np.ndarray, classes: np.ndarray = None, steps=ALS_PRESET,
     alive = np.arange(n)
     codes = np.zeros(n, np.int16)
     removed_by = np.full(n, -1, np.int16)
+    filters_result = {}
     scale = None
     if any(k.endswith("_s") for st in steps for k in st):
-        scale = density_scale(points)
+        if len(points) > 1:
+            scale = density_scale(points, k=min(8, len(points) - 1))
         if verbose:
-            print(f"  шаг облака s = {scale:.3f} м")
+            if scale is not None:
+                print(f"  шаг облака s = {scale:.3f} м")
     for si, step in enumerate(steps):
         params = {k: v for k, v in step.items() if k != "name"}
         if scale is not None:
@@ -112,12 +117,26 @@ def clean(points: np.ndarray, classes: np.ndarray = None, steps=ALS_PRESET,
         bad = c > 0
         codes[alive[bad]] = c[bad]
         removed_by[alive[bad]] = si
+        deleted_points_count = int(np.count_nonzero(bad))
+        percent_deleted_points = (
+            100.0 * deleted_points_count / len(bad) if len(bad) else 0.0
+        )
+        number_of_remaining = int(np.count_nonzero(~bad))
+        filter_worktime = time.perf_counter() - t
+        filters_result[step["name"]] = {
+            "deleted_points_count": deleted_points_count,
+            "percent_deleted_points": percent_deleted_points,
+            "number_of_remaining": number_of_remaining,
+            "filter_worktime": filter_worktime,
+        }
         if verbose:
-            print(f"  [{si}] {step['name']:<11} удалено {bad.sum():>8} "
-                  f"({100 * bad.mean():6.3f}%)  осталось {(~bad).sum():>9}  "
-                  f"{time.perf_counter() - t:6.1f} c")
+            print(f"  [{si}] {step['name']:<11} удалено {deleted_points_count:>8} "
+                  f"({percent_deleted_points:6.3f}%)  осталось {number_of_remaining:>9}  "
+                  f"{filter_worktime:6.1f} c")
         alive = alive[~bad]
-    return CleanResult(removed_by < 0, codes, removed_by, list(steps))
+    return CleanResult(
+        removed_by < 0, codes, removed_by, list(steps), filters_result, scale
+    )
 
 
 def metrics(keep: np.ndarray, is_noise: np.ndarray) -> dict:

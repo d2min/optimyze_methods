@@ -16,6 +16,7 @@ from lib import process_directory_json  # noqa: E402
 from lib import pipeline  # noqa: E402
 from lib import __main__ as cli  # noqa: E402
 from lib.optimization.filtering import clean  # noqa: E402
+from lib.optimization.filtering import pipeline as filtering_pipeline  # noqa: E402
 
 
 def _mock_pipeline():
@@ -44,7 +45,9 @@ def _mock_pipeline():
         patch.object(
             pipeline, "clean",
             lambda points, _classes=None, **_kwargs: SimpleNamespace(
-                keep=np.ones(len(points), dtype=bool)
+                keep=np.ones(len(points), dtype=bool),
+                filters_result={},
+                cloud_scale=1.0,
             ),
         ),
         patch.object(
@@ -81,7 +84,9 @@ def test_directory_api_returns_results_and_yields_per_file():
             assert good is not None, report.files
             assert good.output_points == 3
             assert good.input_points == 3
-            assert good.unique_classes == 1
+            assert good.unique_classes == [0]
+            assert good.point_cloud_step_before_downsampling is not None
+            assert good.point_cloud_step_after_downsampling == 1.0
             assert good.points_removed_by_filter == 0
             assert good.coordinate_range == {
                 "x": {"min": 0.0, "max": 0.0},
@@ -138,7 +143,16 @@ def test_process_directory_json_reports_file_statistics():
                 pipeline,
                 "clean",
                 lambda points, _classes=None, **_kwargs: SimpleNamespace(
-                    keep=np.array([True, False, True])
+                    keep=np.array([True, False, True]),
+                    cloud_scale=0.5,
+                    filters_result={
+                        "hag": {
+                            "deleted_points_count": 1,
+                            "percent_deleted_points": 50.0,
+                            "number_of_remaining": 1,
+                            "filter_worktime": 0.25,
+                        }
+                    },
                 ),
             ),
             patch.object(
@@ -162,8 +176,18 @@ def test_process_directory_json_reports_file_statistics():
     assert "ground_source" not in file_result
     assert "output_path" not in file_result
     assert file_result["rows_loaded"] == 3
-    assert file_result["unique_classes"] == 2
+    assert file_result["unique_classes"] == [2, 6]
+    assert file_result["point_cloud_step_before_downsampling"] is not None
+    assert file_result["point_cloud_step_after_downsampling"] == 0.5
     assert file_result["points_removed_by_filter"] == 1
+    assert file_result["filters_result"] == {
+        "hag": {
+            "deleted_points_count": 1,
+            "percent_deleted_points": 50.0,
+            "number_of_remaining": 1,
+            "filter_worktime": 0.25,
+        }
+    }
     assert file_result["coordinate_range"] == {
         "x": {"min": 1.0, "max": 7.0},
         "y": {"min": 2.0, "max": 8.0},
@@ -260,6 +284,24 @@ def test_silent_clean_does_not_print_when_hag_step_is_skipped():
     assert output.getvalue() == ""
 
 
+def test_clean_returns_per_filter_statistics():
+    with patch.object(
+        filtering_pipeline,
+        "STEPS",
+        {"test_filter": lambda points, _classes, **_kwargs: np.array([0, 7, 0])},
+    ):
+        result = clean(
+            np.zeros((3, 3)),
+            steps=[{"name": "test_filter"}],
+            verbose=False,
+        )
+
+    assert result.filters_result["test_filter"]["deleted_points_count"] == 1
+    assert result.filters_result["test_filter"]["percent_deleted_points"] == 100 / 3
+    assert result.filters_result["test_filter"]["number_of_remaining"] == 2
+    assert isinstance(result.filters_result["test_filter"]["filter_worktime"], float)
+
+
 if __name__ == "__main__":
     test_directory_api_returns_results_and_yields_per_file()
     print("ok  test_directory_api_returns_results_and_yields_per_file")
@@ -273,3 +315,5 @@ if __name__ == "__main__":
     print("ok  test_cli_debug_flag_enables_debug_pipeline")
     test_silent_clean_does_not_print_when_hag_step_is_skipped()
     print("ok  test_silent_clean_does_not_print_when_hag_step_is_skipped")
+    test_clean_returns_per_filter_statistics()
+    print("ok  test_clean_returns_per_filter_statistics")
