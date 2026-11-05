@@ -32,10 +32,10 @@ class XYZLoader:
     
     # Выгрузка данных из файла
     # Можно задать ограничение точек для тестирования
-    # dtype: float32 по умолчанию. Для UTM-координат (миллионы метров) передавайте
-    # np.float64 — во float32 шаг сетки на таких числах до 0.5 м, соседние точки слипаются
+    # По умолчанию используем float64, чтобы сохранять точность координат
+    # большого масштаба. float32 можно передать явно, если важнее экономия памяти.
     def load(self, max_points: Optional[int] = None,
-             dtype=np.float32) -> Tuple[np.ndarray, np.ndarray]:
+             dtype=np.float64) -> Tuple[np.ndarray, np.ndarray]:
         logger.info(f"Загрузка файла: {self.filepath}")
 
         try:

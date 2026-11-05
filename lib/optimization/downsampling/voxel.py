@@ -132,7 +132,12 @@ def _process_voxel_grid(points: np.ndarray, voxel_size: float, p_min: np.ndarray
 
     counts = np.bincount(inverse_indices, minlength=num_voxels)
 
-    centroids = np.empty((num_voxels, 3), dtype=points.dtype)
+    centroid_dtype = (
+        points.dtype
+        if np.issubdtype(points.dtype, np.floating)
+        else np.float64
+    )
+    centroids = np.empty((num_voxels, 3), dtype=centroid_dtype)
     for i in range(3):
         centroids[:, i] = np.bincount(
             inverse_indices, weights=points[:, i], minlength=num_voxels
@@ -218,7 +223,7 @@ def downsample_point_cloud(
     # ШАГ 1: Инициализация и оценка базового размера вокселя (V_base)
     p_min = np.min(points, axis=0)
     p_max = np.max(points, axis=0)
-    dims = p_max - p_min
+    dims = (p_max - p_min).astype(np.float64, copy=False)
     dims[dims == 0] = 1e-6  # Защита от вырожденных случаев
 
     volume = np.prod(dims)

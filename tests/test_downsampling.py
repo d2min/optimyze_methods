@@ -116,6 +116,37 @@ def test_voxel_class_uses_majority_path_for_many_distinct_classes():
     assert result_classes[0] == 2
 
 
+def test_integer_points_keep_fractional_voxel_centroids():
+    points = np.array([
+        [0, 0, 0],
+        [1, 1, 1],
+        [2, 2, 2],
+        [2, 2, 3],
+    ], dtype=np.int32)
+
+    centroids = _process_voxel_grid(
+        points, voxel_size=10.0, p_min=np.zeros(3)
+    )
+
+    assert np.issubdtype(centroids.dtype, np.floating)
+    np.testing.assert_allclose(centroids, [[1.25, 1.25, 1.5]])
+
+
+def test_downsampling_integer_points_with_a_flat_axis_is_finite():
+    points = np.array([
+        [0, 0, 0],
+        [1, 1, 0],
+        [2, 2, 0],
+        [2, 1, 0],
+    ], dtype=np.int32)
+
+    with np.errstate(divide="raise", invalid="raise"):
+        result = downsample_point_cloud(points, target_points=2)
+
+    assert len(result) <= 2
+    assert np.isfinite(result).all()
+
+
 if __name__ == "__main__":
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     for test in tests:
